@@ -2,7 +2,7 @@
 
 Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.
 
-Version 2.23.0 · macOS 27.2 or later · © 2026 John Aldrich
+Version 2.24.0 · macOS 27.2 or later · © 2026 John Aldrich
 
 ![The dashboard during a live window](images/01-dashboard.jpg)
 
@@ -42,6 +42,10 @@ While it's running, Kalshi Bot keeps your Mac from sleeping, so it doesn't miss 
 | Tabs | Dashboard, Indicators, Performance, Prediction Log and Activity. |
 | Copy CSV | Copies the whole prediction log to the clipboard as CSV, for a spreadsheet. |
 | Start / Stop | Starts or pauses the bot. |
+
+### Popover tips
+
+Every field explains itself. Rest the pointer on any figure, label, setting or button for a moment and a popover opens with its name and a fuller explanation: what it measures, how it's calculated and how to read it. Moving away, clicking, typing or scrolling closes it. In the Prediction Log and the Performance tab's charts and tables, hovering opens the detailed breakdown for that window or period instead.
 
 ## 2. How the markets work
 

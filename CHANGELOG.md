@@ -5,6 +5,19 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.24.0] — 2026-11-03 · Build 44
+
+### Added
+- **Popover tips on every field.** Rest the pointer on any figure, label, setting or
+  button for a moment and a popover opens with its name and a fuller explanation: what it
+  measures, how it's calculated, and how to read it. Tips cover the Current Window,
+  Prediction, Reversal Risk, Accuracy, Model, Strategy and Candle Pattern cards, the chart
+  summaries and Layers menus (which now describe every layer), the Indicators tab, the
+  Performance summary and trends, and the toolbar. Only one tip is open at a time, it
+  opens on the side away from the nearer screen edge, and any click, key press or scroll
+  closes it. They replace the plain system tooltips. The Prediction Log and the
+  Performance charts and tables keep their existing hover breakdowns.
+
 ## [2.23.0] — 2026-11-03 · Build 43
 
 ### Changed

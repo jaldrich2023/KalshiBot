@@ -60,16 +60,20 @@ struct PerformanceView: View {
         Panel(title: "Against Kalshi", systemImage: "scalemass") {
             HStack(spacing: 36) {
                 metric("Windows", "\(overall.windows)")
+                    .infoTip("Windows", "Settled, counted windows with a Kalshi price at the call — the ones the bot can be compared with Kalshi on. No-call windows are left out.")
                 metric("Bot accuracy", BotEngine.percent(overall.botAccuracy))
+                    .infoTip("Bot accuracy", "The share of those windows the bot called right.")
                 metric("Kalshi favorite", BotEngine.percent(overall.marketAccuracy))
+                    .infoTip("Kalshi favorite", "The share of the same windows where the side Kalshi priced above 50% at the call won — the benchmark.")
                 metric("Brier edge / window", PerformanceBreakdown.points(overall.edge), tint: tint(overall.verdict))
-                    .help("Kalshi's squared error minus the bot's, in points per window. Positive means the bot's probability was closer to the outcome.")
+                    .infoTip("Brier edge / window", "Kalshi's squared error minus the bot's, in points per window. Positive means the bot's probability was closer to the outcome; zero means it matched Kalshi's price, as it does while the model follows Kalshi's odds.")
                 VStack(alignment: .leading, spacing: 4) {
                     VerdictPill(verdict: overall.verdict)
                     Text(overall.isSignificant ? "Larger than the noise" : "Within the noise (±\(PerformanceBreakdown.magnitude(overall.edgeMargin)) pts)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                .infoTip("Verdict", "Whether the bot beat, trailed or matched Kalshi's price overall, and whether the gap is larger than its 95% margin of error. Within the noise means it could be luck either way.")
                 Spacer(minLength: 0)
             }
             Text("Green marks periods where the bot's probability was closer to the outcomes than Kalshi's price; red, where Kalshi's was closer. Times are Eastern, Kalshi's clock.")
@@ -197,7 +201,6 @@ struct PerformanceView: View {
                                 .padding(.vertical, 2)
                                 .background(.white.opacity(trend.isConfirmed ? 0.2 : 0.08), in: .capsule)
                                 .foregroundStyle(trend.isConfirmed ? .primary : .secondary)
-                                .help(trend.isConfirmed ? "Larger than its margin of error" : "Within its margin of error — could still be luck")
                         }
                         Text(trend.detail)
                             .font(.caption)
@@ -206,6 +209,7 @@ struct PerformanceView: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
+                .infoTip("\(trend.title) — \(trend.isConfirmed ? "confirmed" : "early sign")", "\(trend.detail) \(trend.isConfirmed ? "Confirmed: the effect is larger than its margin of error." : "Early sign: within its margin of error, so it could still be luck — more windows will tell.")")
             }
         }
         .frame(maxWidth: .infinity)

@@ -34,6 +34,7 @@ struct StrategyCard: View {
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
+                .infoTip("About these figures", "Kalshi Bot never places trades. Fair value is the bot's model on live data, which follows Kalshi's odds unless learned weights have beaten them on held-out windows. Profit figures include Kalshi's taker fee, which is highest for contracts near 50¢.")
         }
         .font(.callout)
     }
@@ -51,7 +52,7 @@ struct StrategyCard: View {
                 TextField("Stake", value: $engine.stake, format: .currency(code: "USD").precision(.fractionLength(0...2)))
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
-                    .help("Dollars to put on each window's call. Used only for these estimates — the bot doesn't place trades.")
+                    .infoTip("Stake", "Dollars to put on each window's call. It's used only for the estimates below — the bot doesn't place trades. The position is the whole number of contracts this buys at the call-time price, fee included.")
                 Text("per window").font(.caption).foregroundStyle(.secondary)
             }
             positionDetails
@@ -88,6 +89,7 @@ struct StrategyCard: View {
                 Text("\(position.contracts) × \(upCall ? "Yes (Up)" : "No (Down)") at \(StrategyAdvisor.cents(position.entry)) · cost \(BotEngine.usd(position.cost))")
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .infoTip("Position", "The contracts your stake would have bought on the called side at the call: how many, at what price each (Kalshi's ask then), and the total cost including Kalshi's fee.")
             pnlRow("If sold now", position.profitNow,
                    help: "Selling every contract at the current bid, after Kalshi's fee.")
             pnlRow("If it settles \(upCall ? "Up" : "Down")", position.profitIfRight,
@@ -122,7 +124,7 @@ struct StrategyCard: View {
                 if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
             }
         }
-        .help(help)
+        .infoTip(label, help)
     }
 
     // MARK: Call settings
@@ -141,7 +143,7 @@ struct StrategyCard: View {
                 }
                 .menuStyle(.button)
                 .fixedSize()
-                .help("High hit rate calls later and counts only confident calls: right 88% of the time in 6,459 past windows, versus 73% for Standard, with 71% of windows called. It raises accuracy, not profit — those contracts cost correspondingly more. Changing the call time rebuilds the model's history at the new minute.")
+                .infoTip("Preset", "Sets the call time and the confidence threshold together. High hit rate calls later and counts only confident calls: right 88% of the time in 6,459 past windows, versus 73% for Standard, with 71% of windows called. It raises accuracy, not profit — those contracts cost correspondingly more. Changing the call time rebuilds the model's history at the new minute. Custom means the settings below don't match a preset.")
             }
             GridRow {
                 Text("Call at").foregroundStyle(.secondary)
@@ -152,7 +154,7 @@ struct StrategyCard: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .help("When each window's call locks: any minute from +3 to +12. Later calls are right more often because more of the window has played out — but Kalshi's price has moved too. Changing this rebuilds the model's history at the new time.")
+                .infoTip("Call at", "When each window's call locks: any minute from +3 to +12. Later calls are right more often because more of the window has played out — but Kalshi's price has moved too. Each option shows how often Kalshi's favorite won at that minute in the history. Changing this rebuilds the model's history at the new time.")
             }
             GridRow {
                 Text("Calls").foregroundStyle(.secondary)
@@ -163,7 +165,7 @@ struct StrategyCard: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .help("Confident calls only: windows whose call is below this confidence are marked “No call” and left out of accuracy and performance. Fewer calls, but historically far more of them right. Every window is still logged and trained on.")
+                .infoTip("Calls", "Confident calls only: windows whose call is below this confidence are marked “No call” and left out of accuracy and performance. Fewer calls, but historically far more of them right. Every window is still logged and trained on.")
             }
             GridRow {
                 Text("Stop-loss").foregroundStyle(.secondary)
@@ -184,7 +186,7 @@ struct StrategyCard: View {
                     .pickerStyle(.menu)
                     .disabled(engine.customStopLoss == 0)
                 }
-                .help("How much of what you paid to risk before the stop-loss line: the chart's stop sits where selling would return (1 − this) of the entry price. Very tight stops (5–10%) can sit inside the spread and fee, so they may say “Exit now” right after entry.")
+                .infoTip("Stop-loss", "How much of what you paid to risk before the stop-loss line: the chart's stop sits where selling would return (1 − this) of the entry price. Unchecked, the trading style's default applies. Very tight stops (5–10%) can sit inside the spread and fee, so they may say “Exit now” right after entry.")
             }
             GridRow {
                 Text("Take profit").foregroundStyle(.secondary)
@@ -205,7 +207,7 @@ struct StrategyCard: View {
                     .pickerStyle(.menu)
                     .disabled(engine.customTakeProfit == 0)
                 }
-                .help("The gain on what you paid to take profit at: the chart's take-profit line sits where selling would return the entry price plus this. A contract can't sell for more than about 98¢ after the fee, so large gains on expensive entries can't be reached — the chart then shows no take-profit line.")
+                .infoTip("Take profit", "The gain on what you paid to take profit at: the chart's take-profit line sits where selling would return the entry price plus this. Unchecked, the trading style's default applies. A contract can't sell for more than about 98¢ after the fee, so large gains on expensive entries can't be reached — the chart then shows no take-profit line.")
             }
             if let market = engine.currentMarket, let plan = engine.exitPlan(for: market, record: record), plan.takeProfitUnreachable {
                 GridRow {
@@ -220,7 +222,7 @@ struct StrategyCard: View {
                 Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
                 Toggle("Use Kalshi odds", isOn: $engine.useKalshiOdds)
                     .toggleStyle(.checkbox)
-                    .help("Include Kalshi's own Yes price as one of the model's indicators")
+                    .infoTip("Use Kalshi odds", "Include Kalshi's own Yes price as one of the model's indicators, and anchor the model to it. On, the bot starts from the market's calibrated odds and only adjusts them when learned weights prove better. Off, it uses price signals alone, which tested much less accurate.")
             }
             if !engine.useKalshiOdds {
                 GridRow {
@@ -236,7 +238,7 @@ struct StrategyCard: View {
                 Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
                 Toggle("Keep Mac awake", isOn: $engine.keepMacAwake)
                     .toggleStyle(.checkbox)
-                    .help("While the bot runs, stop the Mac from idle-sleeping so no window is missed. Off: the Mac can sleep, and the bot misses the windows while it's asleep.")
+                    .infoTip("Keep Mac awake", "While the bot runs, stop the Mac from idle-sleeping so no window is missed. The display can still sleep. Off: the Mac can sleep, and the bot misses the windows while it's asleep.")
             }
         }
         .font(.callout)
@@ -262,7 +264,7 @@ struct StrategyCard: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .help("How readily entries are suggested and how quickly to exit. No style has a proven edge over Kalshi's price.")
+            .infoTip("Trading style", "How readily entries are suggested and how quickly to exit: the edge an entry needs after fees, the reversal risk that triggers an exit, and the default stop-loss and take-profit. No style has a proven edge over Kalshi's price.")
             Text(engine.tradingStyle.summary)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -304,16 +306,21 @@ struct StrategyCard: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
             .glassEffect(.regular.tint(tint(for: advice.action)), in: .capsule)
+            .infoTip("Recommendation", "What the trading style suggests right now, updated every second: buy Yes, buy No, or stand aside. An entry needs fair value to beat the price by the style's minimum edge after Kalshi's fee. The reason is given underneath.")
         Text(advice.justification)
             .fixedSize(horizontal: false, vertical: true)
         Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
             GridRow {
                 metric("Fair Up", advice.fairUp.formatted(.percent.precision(.fractionLength(0))))
+                    .infoTip("Fair Up", "The bot's live chance that the window settles Up — the price a Yes contract would be worth if the model is right. It follows Kalshi's odds unless learned weights have proven better.")
                 metric("Yes bid/ask", quote(advice.yesBid, advice.yesAsk))
+                    .infoTip("Yes bid/ask", "Kalshi's best bid and ask for Yes. You buy Yes at the ask and sell at the bid; No costs 1 − the Yes bid.")
             }
             GridRow {
                 metric("Edge Yes", advice.edgeYes.map(StrategyAdvisor.signedCents) ?? "—")
+                    .infoTip("Edge Yes", "Expected profit per Yes contract bought now: fair value minus the ask, minus Kalshi's fee. Negative means buying Yes is expected to lose.")
                 metric("Edge No", advice.edgeNo.map(StrategyAdvisor.signedCents) ?? "—")
+                    .infoTip("Edge No", "Expected profit per No contract bought now: the fair chance of Down minus No's price, minus Kalshi's fee. Negative means buying No is expected to lose.")
             }
         }
     }
@@ -366,6 +373,7 @@ struct StrategyCard: View {
             if let record {
                 Text("Called \(record.predictedUp ? "Up" : "Down") at \(record.probabilityUp.formatted(.percent.precision(.fractionLength(1)))) P(up), \(record.predictedAt.formatted(date: .omitted, time: .shortened))")
                     .fontWeight(.medium)
+                    .infoTip("Factors behind the call", "The indicators that moved this window's locked call the most, in percentage points of P(up), largest first. Green pushed toward Up, red toward Down. Indicators that moved it less than a tenth of a point aren't listed.")
                 let contributions = record.contributions
                     .map { (key: $0.key, points: IndicatorEffect.points(probabilityUp: record.probabilityUp, contribution: $0.value)) }
                     .filter { abs($0.points) >= 0.05 }
@@ -384,6 +392,7 @@ struct StrategyCard: View {
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
+                    .infoTip(item.key.title, "Moved this call \(item.points >= 0 ? "toward Up" : "toward Down") by \(abs(item.points).formatted(.number.precision(.fractionLength(1)))) percentage points of P(up), from its value at the call and its weight in the model. The Indicators tab explains what it measures.")
                 }
             } else {
                 Text("No call locked yet — the call locks \(engine.callDelayMinutes) min after the open.")
@@ -429,6 +438,7 @@ struct StrategyCard: View {
                 }
                 .opacity(isActive ? 1 : 0.6)
                 .accessibilityElement(children: .combine)
+                .infoTip(alert.signal.title, "\(alert.signal.kind == .entry ? "An entry" : "An exit") signal for \(alert.signal.isYes ? "Yes (Up)" : "No (Down)"), first triggered at \(alert.time.formatted(date: .omitted, time: .standard)). \(isActive ? "Still active now." : "No longer active; last seen at \(alert.lastSeen.formatted(date: .omitted, time: .standard)).") Signals are suggestions only — the bot doesn't trade.")
             }
             }
         }

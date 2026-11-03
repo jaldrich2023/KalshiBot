@@ -264,12 +264,13 @@ struct WindowPriceChart: View {
         let secondsLeft = market.closeTime.timeIntervalSinceNow
         HStack(spacing: 24) {
             summaryMetric("Trend so far", projection.map { Self.perMinute($0.slopePerSecond) } ?? "—")
-                .help("Slope of the straight-line fit through this window's prices. Descriptive only: extending it to the close was a poor forecast in backtests.")
+                .infoTip("Trend so far", "Slope of the straight-line fit through this window's prices, in dollars per minute. Descriptive only: extending it to the close was a poor forecast in backtests.")
             summaryMetric("Projected close", projection.map { BotEngine.usd($0.forecastSettlement) } ?? "—")
-                .help("The current price — the best forecast of the settlement in a 30-day backtest, beating the extended trend at every minute")
+                .infoTip("Projected close", "The forecast for the settlement value: the current price. In a 30-day backtest it beat the extended trend at every minute, because short-term moves don't carry on predictably.")
             summaryMetric("vs. target", projection.flatMap {
                 WindowChart.differenceFromTarget($0.forecastSettlement, market: market)?.replacingOccurrences(of: " vs. target", with: "")
             } ?? "—")
+            .infoTip("vs. target", "How far the projected close is above or below the target. Above means the window would settle Up if the price held.")
             summaryMetric("P(up) from price now", projection.flatMap { projection in
                 market.floorStrike.map {
                     // Same calibrated odds as the Reversal Risk card.
@@ -278,11 +279,11 @@ struct WindowPriceChart: View {
                                                               volatility: projection.volatilityPerRootSecond).probabilityUp)
                 }
             } ?? "—")
-            .help("Probability of settling at or above the target from the current price, time left and volatility — calibrated on 30 days of windows")
+            .infoTip("P(up) from price now", "Probability of settling at or above the target from the current price, time left and volatility — calibrated on 30 days of windows. It's the same calculation as the Reversal Risk card, from the Up side.")
             summaryMetric("Close range", projection.map {
                 "±\(BotEngine.usd($0.settlementSigma(secondsRemaining: secondsLeft)))"
             } ?? "—")
-            .help("±1σ for the settlement from the current price (shaded). It narrows as the window runs down; the funnel shows how it has tightened.")
+            .infoTip("Close range", "±1σ for the settlement from the current price (shaded on the chart): about two windows in three settle inside it. It narrows as the window runs down; the funnel shows how it has tightened.")
         }
         .accessibilityElement(children: .combine)
     }

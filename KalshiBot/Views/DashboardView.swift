@@ -126,6 +126,7 @@ struct DashboardView: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
+                .infoTip("Bitcoin price", "The bot's live estimate of CF Benchmarks' Real-Time Index (BRTI), the index Kalshi settles these windows on: a weighted average of the exchanges listed below plus the BRTI calibration offset. Updated several times a second. The line underneath is how far it is above (green) or below (red) this window's target — if it's above the target at the close, the window settles Up.")
             } else {
                 Text("Fetching prices…").foregroundStyle(.secondary)
             }
@@ -137,10 +138,12 @@ struct DashboardView: View {
                     LabeledContent("Window") {
                         Text("\(market.openTime.formatted(date: .omitted, time: .shortened)) – \(market.closeTime.formatted(date: .omitted, time: .shortened))")
                     }
+                    .infoTip("Window", "This 15-minute window's open and close, in your local time. Kalshi lists a new KXBTC15M market every quarter hour; the bot moves to the next one the second this one closes.")
                     LabeledContent("Closes in") {
                         Text(timerInterval: Date.now...max(market.closeTime, .now), countsDown: true)
                             .monospacedDigit()
                     }
+                    .infoTip("Closes in", "Time left until settlement. At the close Kalshi compares the 60-second BRTI average before the close with the target: at or above settles Up (Yes pays $1), below settles Down (No pays $1).")
                     LabeledContent("Target") {
                         HStack(spacing: 4) {
                             Text(market.floorStrike.map(BotEngine.usd) ?? "TBD")
@@ -152,28 +155,29 @@ struct DashboardView: View {
                             }
                         }
                     }
-                    .help(market.strikeIsEstimate
-                          ? "The bot's own 60-second average before the open, shown until Kalshi publishes the official target"
-                          : "The official 60-second CF Benchmarks BRTI average before the open")
+                    .infoTip("Target", market.strikeIsEstimate
+                          ? "The price Bitcoin must be at or above at the close for the window to settle Up. Marked est.: this is the bot's own 60-second average before the open, shown until Kalshi publishes the official target a few seconds into the window."
+                          : "The price Bitcoin must be at or above at the close for the window to settle Up: Kalshi's official 60-second CF Benchmarks BRTI average before the open.")
                     if let yesMid = market.yesMid {
                         LabeledContent("Kalshi Yes", value: BotEngine.percent(yesMid))
+                            .infoTip("Kalshi Yes", "The market's implied chance that this window settles Up: the midpoint of the best Yes bid and ask in Kalshi's order book, refreshed every second. Kalshi's price has been well calibrated in the history — a 60% price has won about 60% of the time.")
                     }
                     LabeledContent("Sources", value: "\(engine.spotSources) of \(LivePriceFeed.sourceCount) · \(engine.isStreaming ? "live" : "polling")")
-                        .help(engine.isStreaming
-                              ? "Exchanges agreeing on price right now: Coinbase, Kraken and Bitstamp stream live; Gemini, Crypto.com, Binance.US and the Deribit and Kraken USDC books are polled every 1–2 s. A book off by more than 0.05% from the rest is left out."
-                              : "Live sources unavailable; polling exchange APIs every second")
+                        .infoTip("Sources", engine.isStreaming
+                              ? "Exchanges agreeing on price right now, of the \(LivePriceFeed.sourceCount) the bot reads. Coinbase, Kraken and Bitstamp stream live; the others are polled every 1–2 seconds. A book more than 0.05% from the rest is left out as off-market, and one with no fresh quote for 10 seconds is left out as stale. Hover over any exchange below for its own status."
+                              : "Live streams are unavailable, so the bot is polling the exchanges' APIs every second instead. Prices update a little less often until the streams reconnect, which happens automatically.")
                     SourceList(statuses: engine.sourceStatuses, calibration: engine.priceCalibration)
                     if engine.calibrationSampleCount > 0 {
                         LabeledContent("BRTI calibration") {
                             Text("\(engine.priceCalibration >= 0 ? "+" : "−")\(BotEngine.usd(abs(engine.priceCalibration)))")
                         }
-                        .help("Added to the exchange composite so it tracks CF Benchmarks' BRTI: the median gap over the last \(engine.calibrationSampleCount) window opens")
+                        .infoTip("BRTI calibration", "Added to the exchange composite so it tracks CF Benchmarks' BRTI, which Kalshi settles on. It's the median gap between the composite and Kalshi's official target over the last \(engine.calibrationSampleCount) window opens, and it updates at each new open.")
                     }
                     if let error = engine.trackingError {
                         LabeledContent("Tracking error") {
                             Text("±\(BotEngine.usd(error))")
                         }
-                        .help("How far the index estimate was from Kalshi's official target, typically (median), over the last \(engine.trackingErrors.count) window opens. \(engine.sourceOffsets.isEmpty ? "Per-exchange offsets switch on once \(BotEngine.minimumMeasuredSources) exchanges have been measured at \(BotEngine.minimumOffsetSamples) opens." : "Per-exchange offsets are on for \(engine.sourceOffsets.count) exchanges.") Only windows that finish within about this much of their target are at risk of being misjudged.")
+                        .infoTip("Tracking error", "How far the index estimate was from Kalshi's official target, typically (median), over the last \(engine.trackingErrors.count) window opens. \(engine.sourceOffsets.isEmpty ? "Per-exchange offsets switch on once \(BotEngine.minimumMeasuredSources) exchanges have been measured at \(BotEngine.minimumOffsetSamples) opens." : "Per-exchange offsets are on for \(engine.sourceOffsets.count) exchanges.") Only windows that finish within about this much of their target are at risk of being misjudged.")
                     }
                 }
                 .font(.callout)
@@ -182,6 +186,7 @@ struct DashboardView: View {
                     .font(.caption2.monospaced())
                     .foregroundStyle(.tertiary)
                     .textSelection(.enabled)
+                    .infoTip("Market ticker", "Kalshi's identifier for this window's market: the series (KXBTC15M), the close date and time in US Eastern time, and the window number. Selectable, so you can copy it to find the market on Kalshi.")
             } else {
                 Text("Waiting for an open KXBTC15M market…")
                     .foregroundStyle(.secondary)
@@ -198,6 +203,7 @@ struct DashboardView: View {
                     .padding(.horizontal, 18)
                     .padding(.vertical, 8)
                     .glassEffect(.regular, in: .capsule)
+                    .infoTip("No call", "This window's call was below the confidence threshold set under Calls in the Strategy card, so it isn't counted in accuracy or performance. It's still logged and the model still trains on it.")
                 Text("Leaning \(record.predictedUp ? "Up" : "Down") at only \(BotEngine.percent(record.confidence)) confidence — below the \(BotEngine.percent(engine.minimumCallConfidence)) needed for a call.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -205,7 +211,7 @@ struct DashboardView: View {
             } else if let record = currentRecord {
                 PredictionBadge(probabilityUp: record.probabilityUp)
                 Text("Locked \(record.predictedAt.formatted(date: .omitted, time: .standard)) · \(Int(record.predictedAt.timeIntervalSince(record.openTime)))s after open")
-                    .help("Calls lock \(engine.callDelayMinutes) min after the open — the same moment the model's history is built at")
+                    .infoTip("Call time", "Calls lock \(engine.callDelayMinutes) min after the open — the same moment the model's history is built at, so live calls and training examples are like for like. After it locks, the call never changes; the live figures below keep updating. Change the minute under Call at in the Strategy card.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let like = engine.callsLikeThis(confidence: record.confidence) {
@@ -214,11 +220,12 @@ struct DashboardView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                        .help("How often Kalshi's favorite won in past windows priced in the same 5-point band at the same call time — what this confidence has been worth historically.")
+                        .infoTip("Calls like this", "How often Kalshi's favorite won in past windows priced in the same 5-point confidence band at the same call time — what this confidence has been worth historically. Because Kalshi's price is well calibrated, expect a 60% call to be wrong about 4 times in 10.")
                 }
             } else {
                 Text("No prediction locked for this window")
                     .foregroundStyle(.secondary)
+                    .infoTip("No prediction yet", "The bot calls each window once, \(engine.callDelayMinutes) min after it opens. If the bot started after that moment, this window is skipped and the next one is called on time.")
                 Text("The call locks \(engine.callDelayMinutes) min after each window opens.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -279,7 +286,7 @@ struct SourceList: View {
                                              : isOut(status.state) ? AnyShapeStyle(color(status.state)) : AnyShapeStyle(.tertiary))
                             .gridColumnAlignment(.trailing)
                     }
-                    .help(detail(status))
+                    .infoTip(status.source.title, detail(status))
                     .accessibilityElement(children: .combine)
                 }
                 Divider().gridCellColumns(5)
@@ -290,7 +297,7 @@ struct SourceList: View {
                     Text("")
                     Text("100%").fontWeight(.semibold)
                 }
-                .help("Weighted average of the sources marked Used (\(usedCount) of \(statuses.count) right now). Once each exchange's gap to the official index has been measured, steadier exchanges count more, up to 25% each; until then they count equally.")
+                .infoTip("Composite", "Weighted average of the sources marked Used (\(usedCount) of \(statuses.count) right now), each with its own BRTI offset. Once each exchange's gap to the official index has been measured, the exchanges that track it most steadily count more, up to 25% each; until then, or with four or fewer sources, they count equally.")
                 GridRow {
                     Image(systemName: "scope").foregroundStyle(.tint)
                     Text("Index est.").fontWeight(.semibold)
@@ -299,13 +306,14 @@ struct SourceList: View {
                         .foregroundStyle(.secondary)
                     Text("")
                 }
-                .help("The composite plus the BRTI calibration offset — the price the bot uses for Kalshi's settlement index (CF Benchmarks BRTI).")
+                .infoTip("Index estimate", "The composite plus the BRTI calibration offset (shown beside it) — the price the bot uses for Kalshi's settlement index, CF Benchmarks' BRTI. This is the big price at the top of the card.")
             }
             .monospacedDigit()
             Text("✓ used · ↔ trimmed (highest/lowest) · ⚠︎ off-market · clock stale, with time out. Gaps include each exchange's BRTI offset. Composite = weighted average of \(usedCount) used.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
+                .infoTip("Reading the list", "Columns: status, exchange, its latest mid price, its gap to the composite (after its BRTI offset), and its share of the composite. A source out of use shows how long it's been out instead of a share. Used sources are averaged; the highest and lowest are trimmed; off-market and stale sources are left out until they come back in line.")
         }
         .font(.caption)
     }
@@ -393,6 +401,7 @@ struct LiveOddsView: View {
                 Text("LIVE").font(.caption2.weight(.bold)).tracking(0.8).foregroundStyle(.secondary)
             }
             .accessibilityHidden(true)
+            .infoTip("Live", "Everything below refreshes every second from Kalshi's order book and the live price feed, unlike the locked call above.")
 
             HStack(spacing: 10) {
                 // Buying Yes pays the Yes ask; buying No pays 1 − the Yes bid.
@@ -411,13 +420,14 @@ struct LiveOddsView: View {
                     Text("\(BotEngine.percent(max(p, 1 - p))) confidence").monospacedDigit()
                 }
                 .font(.callout)
-                .help("The model on live data right now. The logged prediction is the one locked at the call time.")
+                .infoTip("Bot now", "What the model would call if the window were called this second, and how confident it would be. It moves with the price and time left. The logged prediction — the one scored for accuracy — is the one locked at the call time.")
                 if let mid = market.yesMid {
                     let gap = (p - mid) * 100
                     Text(abs(gap) < 1 ? "In line with Kalshi's price." :
                             "\(abs(gap).formatted(.number.precision(.fractionLength(1)))) pts \(gap > 0 ? "more" : "less") bullish than Kalshi's price.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .infoTip("Bot vs. Kalshi", "The gap between the bot's live chance of Up and Kalshi's. While the model follows Kalshi's odds (see Predicting with in the Model card), the two match. A gap appears only once learned weights have beaten Kalshi's price on held-out windows.")
                 }
             } else {
                 Text("Live call appears once prices and the target are in.")
@@ -435,12 +445,12 @@ struct LiveOddsView: View {
                 .foregroundStyle(color)
             Text(chance.map(BotEngine.percent) ?? "—")
                 .heroNumber(size: 22)
-                .help("Kalshi's implied chance: the midpoint of the bid and ask")
             Text("Buy \(price.map(StrategyAdvisor.cents) ?? "—") · sell \(sell.map(StrategyAdvisor.cents) ?? "—")")
                 .font(.caption2)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
+        .infoTip(title, "The big figure is Kalshi's implied chance for this side: the midpoint of the bid and ask. Buy is what one contract costs now (the ask) and sell is what it would fetch now (the bid), before Kalshi's fee. Each contract pays $1 if the window settles this way, and nothing otherwise.")
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(color.opacity(0.1), in: .rect(cornerRadius: 10))
@@ -463,9 +473,12 @@ struct PredictionBadge: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 8)
                 .glassEffect(.regular.tint(color.opacity(0.55)), in: .capsule)
+                .infoTip("The call", "The side the bot called for this window, locked at the call time: Up if its chance of Up is 50% or more, otherwise Down. It's scored when the window settles.")
             HStack(spacing: 18) {
                 metric("P(up)", BotEngine.percent(probabilityUp))
+                    .infoTip("P(up)", "The model's probability, at the call, that this window settles Up. Below 50% is a Down call.")
                 metric("Confidence", BotEngine.percent(max(probabilityUp, 1 - probabilityUp)))
+                    .infoTip("Confidence", "The probability of the side called: P(up) for an Up call, 1 − P(up) for a Down call. It's a calibrated chance, not a guarantee — a 65% call should be wrong about a third of the time.")
             }
         }
         .accessibilityElement(children: .combine)
@@ -498,12 +511,14 @@ struct AccuracyPanel: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .infoTip("Skipped windows", "Settled windows whose call was below the threshold set under Calls in the Strategy card. They're marked No call and left out of every figure on this card, but kept in the log and used for training.")
                 }
                 if let settled = engine.lastSettledAt {
                     Text("Updated \(settled.formatted(date: .omitted, time: .standard)) · model retrained after each settlement")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .infoTip("Last update", "When the most recent window settled and was scored. Each settlement is added to the training data and the model is retrained and re-tested straight away.")
                 }
             }
             .reservingSpace { AccuracyDetails(stats: .layoutTemplate) }
@@ -531,6 +546,7 @@ private struct TargetAccuracyDetails: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
+                .infoTip("Correct in a row", "The fewest consecutive correct calls that would lift overall accuracy to \(target), from \(stats.correct) of \(stats.total) now. Once it's reached, the card shows how many misses in a row it could absorb and stay there.")
                 Text(path.isReached
                      ? "At or above \(target). \(path.missesToSpare) miss\(path.missesToSpare == 1 ? "" : "es") in a row would still leave it there."
                      : "Needs \(path.correctInARow) correct call\(path.correctInARow == 1 ? "" : "s") in a row to reach \(target); each miss along the way adds about \(missCost) more.")
@@ -540,6 +556,7 @@ private struct TargetAccuracyDetails: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .infoTip("Outlook", "Over many windows, accuracy tends toward the calls' average confidence, because the confidences are calibrated chances. So a target above the average confidence is reached only by luck — or by counting only calls at or above it.")
                 }
             }
         }
@@ -576,55 +593,65 @@ private struct AccuracyDetails: View {
                 Text("\(stats.correct) correct of \(stats.total) settled" + (stats.accuracyMargin.map { " · ±\(points($0)) pts" } ?? ""))
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    .help("95% margin of error")
             }
+            .infoTip("Accuracy", "The share of settled, counted calls that were right. The ± figure is the 95% margin of error: with few windows it's wide, so differences of a few points are usually luck.")
             Divider().opacity(0.5)
             LabeledContent("Expected correct") {
                 Text("\(stats.expectedCorrect.formatted(.number.precision(.fractionLength(1)))) ± \(stats.expectedCorrectMargin.formatted(.number.precision(.fractionLength(1)))) · actual \(stats.correct)")
                     .monospacedDigit()
             }
-            .help("How many calls the bot's own probabilities said should be right, with a 95% range. Actual inside the range is ordinary luck; well below it would mean a real problem.")
+            .infoTip("Expected correct", "How many calls the bot's own probabilities said should be right — the sum of each call's confidence — with a 95% range. Actual inside the range is ordinary luck; well below it would mean the probabilities are overconfident.")
             if let brier = stats.brierScore {
                 LabeledContent("Brier score", value: brier.formatted(.number.precision(.fractionLength(4))))
-                    .help("Lower is better; 0.25 is a coin flip")
+                    .infoTip("Brier score", "The average squared gap between the bot's probability and what happened (1 for Up, 0 for Down). Lower is better: 0 is perfect and 0.25 is a coin flip. Unlike accuracy, it rewards confident calls that were right and penalizes confident calls that were wrong.")
             }
             if let market = stats.marketAccuracy {
                 LabeledContent("Kalshi favorite accuracy", value: BotEngine.percent(market))
+                    .infoTip("Kalshi favorite accuracy", "How often the side Kalshi priced above 50% at the call time won, on the same windows. This is the benchmark: the bot adds value only if it beats it.")
             }
             if let marketBrier = stats.marketBrierScore {
                 LabeledContent("Kalshi Brier score", value: marketBrier.formatted(.number.precision(.fractionLength(4))))
+                    .infoTip("Kalshi Brier score", "The same score for Kalshi's price at the call time, on the same windows. A lower Brier score than this means the bot's probabilities were closer to the outcomes than the market's.")
             }
             if let edge = stats.edgeVsMarket {
                 LabeledContent("Edge vs. Kalshi") {
                     Text("\(edge.accuracy >= 0 ? "+" : "−")\(points(abs(edge.accuracy))) ± \(points(edge.accuracyMargin)) pts")
                         .monospacedDigit()
                 }
-                .help("Bot accuracy minus Kalshi-favorite accuracy on the same \(edge.windows) windows, with a 95% margin of error")
+                .infoTip("Edge vs. Kalshi", "Bot accuracy minus Kalshi-favorite accuracy on the same \(edge.windows) windows, with a 95% margin of error. Only an edge whose margin doesn't cross zero is more than chance.")
                 Text(edgeVerdict(edge))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .infoTip("Verdict", "Whether the edge above is bigger than its margin of error. Distinguishing a small edge from luck takes many windows: the margin shrinks with the square root of the window count.")
             }
             LabeledContent("When ≥\(Int(AccuracyStats.confidentThreshold * 100))% confident") {
             Text(stats.confidentAccuracy.map { "\(BotEngine.percent($0)) (\(stats.confidentCorrect)/\(stats.confidentTotal))" } ?? "—")
                 .monospacedDigit()
         }
-        .help("Accuracy on calls where the bot gave one side at least \(Int(AccuracyStats.confidentThreshold * 100))%")
+        .infoTip("Confident calls", "Accuracy on calls where the bot gave one side at least \(Int(AccuracyStats.confidentThreshold * 100))%, with the count right of those calls. Confident calls are right more often, but there are fewer of them.")
         LabeledContent("Kalshi when ≥\(Int(AccuracyStats.confidentThreshold * 100))%") {
             Text(stats.marketConfidentAccuracy.map { "\(BotEngine.percent($0)) (\(stats.marketConfidentCorrect)/\(stats.marketConfidentTotal))" } ?? "—")
                 .monospacedDigit()
         }
+        .infoTip("Kalshi when confident", "How often Kalshi's favorite won when its price gave one side at least \(Int(AccuracyStats.confidentThreshold * 100))% at the call time — the benchmark for the row above.")
         LabeledContent("Called Up / settled Up", value: "\(stats.predictedUp) / \(stats.actualUp)")
+            .infoTip("Called Up / settled Up", "How many counted calls were Up, next to how many of those windows actually settled Up. Close numbers mean the bot isn't leaning to one side more than the market did.")
             LabeledContent("Current streak", value: stats.currentStreak >= 0 ? "\(stats.currentStreak) W" : "\(-stats.currentStreak) L")
+                .infoTip("Current streak", "Consecutive right (W) or wrong (L) calls up to the latest settled window. Streaks of several losses happen by chance even with a sound model.")
             LabeledContent("Longest win streak", value: "\(stats.longestWinStreak)")
+                .infoTip("Longest win streak", "The most consecutive right calls so far.")
             LabeledContent("Longest losing streak", value: "\(stats.longestLosingStreak)")
+                .infoTip("Longest losing streak", "The most consecutive wrong calls so far. With 65% calls, a run of 4 or 5 misses turns up every few hundred windows by chance alone.")
             Divider()
             Text("By confidence").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                .infoTip("By confidence", "Accuracy split by how confident each call was. If the probabilities are calibrated, each band's accuracy lands close to its confidence — 55–60% calls right a bit under 60% of the time, and so on. Small bands are noisy.")
             ForEach(stats.buckets) { bucket in
                 LabeledContent(bucket.label) {
                     Text(bucket.accuracy.map { "\(BotEngine.percent($0)) (\(bucket.correct)/\(bucket.total))" } ?? "—")
                         .monospacedDigit()
                 }
+                .infoTip("Calls at \(bucket.label)", "Accuracy on calls with confidence in this band, with how many were right of how many. A calibrated band is right about as often as its confidence.")
             }
         }
     }
@@ -692,37 +719,42 @@ struct ModelPanel: View {
             if model.trainingCount == 0 {
                 Text("Using starting weights — no settled windows learned from yet.")
                     .foregroundStyle(.secondary)
+                    .infoTip("Starting weights", "Until windows settle or history is rebuilt, the model predicts with its built-in starting weights, which follow Kalshi's price.")
             } else {
                 LabeledContent("Trained on", value: "\(model.trainingCount) windows")
+                    .infoTip("Trained on", "Settled windows in the model's training data: windows the bot called live, plus past windows rebuilt from Kalshi and Coinbase market history. The model is retrained on all of them after every settlement.")
                 LabeledContent("Live / rebuilt", value: "\(engine.liveExampleCount) / \(engine.historyExampleCount)")
-                    .help("Live windows have every indicator; windows rebuilt from history lack tick momentum, and Kalshi odds where Kalshi has no price history")
+                    .infoTip("Live / rebuilt", "Windows the bot saw live, next to windows rebuilt from market history. Live windows have every indicator; rebuilt ones lack tick momentum, and Kalshi's odds where Kalshi has no price history. Live-only indicators can't be tested until enough live windows build up.")
                 if let trainedAt = model.trainedAt {
                     LabeledContent("Last trained", value: trainedAt.formatted(date: .omitted, time: .standard))
+                        .infoTip("Last trained", "When the model was last refitted and re-tested. It retrains after every settled window.")
                 }
                 LabeledContent("Predicting with", value: model.usesLearnedWeights ? "Learned weights" : baselineName(model))
-                    .help("Learned weights are only used once they beat \(baselinePhrase(model)) on windows they weren't trained on")
+                    .infoTip("Predicting with", "What sets the live probability. Learned weights are used only once they beat \(baselinePhrase(model)) on windows they weren't trained on, by more than the margin of error, in most test blocks. Until then the bot follows \(baselinePhrase(model)). The Indicators tab lists the exact conditions.")
             }
 
             if let evaluation = model.evaluation {
                 Divider()
                 Text("Holdout test (newest \(evaluation.holdoutCount) windows)")
                     .font(.subheadline.bold())
-                    .help("Walk-forward: the newest 40% is split into blocks in time order, and each is scored by a model fitted only on the windows before it")
+                    .infoTip("Holdout test", "Walk-forward: the newest 40% of windows (\(evaluation.holdoutCount)) is split into blocks in time order, and each block is scored by a model fitted only on the windows before it — just as it would have run live. This keeps the test honest: no window is scored by a model that saw it.")
                 if let folds = evaluation.folds, folds > 1 {
                     LabeledContent("Learned weights won") {
                         Text("\(evaluation.foldsWon ?? 0) of \(folds) blocks")
                             .monospacedDigit()
                     }
-                    .help("Learned weights are used only if they beat \(baselinePhrase(model)) in at least \(folds - 1) of \(folds) blocks and overall")
+                    .infoTip("Learned weights won", "In how many of the \(folds) test blocks learned weights beat \(baselinePhrase(model)). They're switched on only if they win at least \(folds - 1) of \(folds) and the overall gain is beyond its margin of error; once on, they stay on unless they win fewer than half the blocks or fall significantly behind.")
                 }
                 LabeledContent("Trained model") {
                     Text("\(BotEngine.percent(evaluation.accuracy)) · Brier \(evaluation.brierScore.formatted(.number.precision(.fractionLength(4))))")
                         .monospacedDigit()
                 }
+                .infoTip("Trained model", "The learned weights' accuracy and Brier score on the held-out windows. Compare with the row below: a lower Brier score is better.")
                 LabeledContent(baselineName(model)) {
                     Text("\(BotEngine.percent(evaluation.priorAccuracy)) · Brier \(evaluation.priorBrierScore.formatted(.number.precision(.fractionLength(4))))")
                         .monospacedDigit()
                 }
+                .infoTip(baselineName(model), "The baseline — \(baselinePhrase(model)) — on the same held-out windows. The learned weights have to beat this to be used.")
                 if !model.usesLearnedWeights {
                     Text("Learned adjustments haven't beaten \(baselinePhrase(model)) yet, so the bot follows \(model.marketAnchored ? "Kalshi's odds" : "the starting weights"). It re-tests after every window.")
                         .font(.caption)
@@ -733,6 +765,7 @@ struct ModelPanel: View {
                 Text("Holdout test runs once \(ModelTrainer.minimumForEvaluation) windows are available.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .infoTip("Holdout test", "Fewer windows than this can't give a test that tells skill from luck, so the bot keeps following the baseline until there are enough.")
             }
 
             if engine.isBackfilling || engine.isTraining {
@@ -742,12 +775,15 @@ struct ModelPanel: View {
                     Text(engine.isBackfilling ? (engine.backfillStatus ?? "Rebuilding past windows…") : "Training…")
                         .foregroundStyle(.secondary)
                 }
+                .infoTip(engine.isBackfilling ? "Rebuilding history" : "Training", engine.isBackfilling
+                         ? "Downloading Kalshi and Coinbase market history and rebuilding past windows as training examples, as they looked at the call time. The first run takes a few minutes; later runs use the saved download and take seconds."
+                         : "Refitting the model on every settled window and re-running the holdout test. Calls keep working meanwhile.")
             }
 
             Divider()
             Text("Path to \(Int(Self.targetAccuracy * 100))% accuracy")
                 .font(.subheadline.bold())
-                .help("Correct calls needed for overall accuracy to reach \(Int(Self.targetAccuracy * 100))%")
+                .infoTip("Path to \(Int(Self.targetAccuracy * 100))%", "How many correct calls it would take for overall accuracy to reach \(Int(Self.targetAccuracy * 100))%, and whether the calls' confidence makes that realistic.")
             TargetAccuracyDetails(path: stats.path(to: Self.targetAccuracy), stats: stats)
                 .reservingSpace {
                     // The longest wording: not reached, with an expected-calls estimate.
@@ -761,9 +797,11 @@ struct ModelPanel: View {
                 Text("Last reset \(lastReset.formatted(date: .abbreviated, time: .shortened))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .infoTip("Last reset", "When the model or data was last reset. Accuracy and training count from this point.")
             }
             Button("Reset Model…", systemImage: "arrow.counterclockwise", role: .destructive) { isConfirmingReset = true }
                 .buttonStyle(.glass)
+                .infoTip("Reset Model", "Offers three choices: reset the model but keep the data; copy the log, then clear all data but keep settings; or erase everything, including settings, and relaunch. You confirm before anything is deleted.")
                 .confirmationDialog("Reset the model?", isPresented: $isConfirmingReset) {
                     Button("Reset Model, Keep Data") { engine.resetModelKeepingData() }
                     Button("Copy Log, Then Clear All Data", role: .destructive) {

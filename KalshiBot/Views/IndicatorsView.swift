@@ -90,24 +90,29 @@ private struct PredictionSummary: View {
         Panel(title: "Current Window", systemImage: "scope") {
             HStack(alignment: .top, spacing: 40) {
                 metric("P(up) at call", record.map { BotEngine.percent($0.probabilityUp) } ?? "—",
-                       detail: record.map { "Called \($0.predictedUp ? "Up" : "Down") at \($0.predictedAt.formatted(date: .omitted, time: .shortened))" } ?? "No call locked this window")
-                metric("P(up) now", engine.liveProbability.map(BotEngine.percent) ?? "—", detail: "Live, informational only")
-                metric("Kalshi Yes now", engine.currentMarket?.yesMid.map(BotEngine.percent) ?? "—", detail: "The market's own odds")
+                       detail: record.map { "Called \($0.predictedUp ? "Up" : "Down") at \($0.predictedAt.formatted(date: .omitted, time: .shortened))" } ?? "No call locked this window",
+                       tip: "The model's chance of Up when this window's call locked, \(engine.callDelayMinutes) min after the open. This is the prediction that's logged and scored.")
+                metric("P(up) now", engine.liveProbability.map(BotEngine.percent) ?? "—", detail: "Live, informational only",
+                       tip: "The model's chance of Up on live data this second. It moves with the price and time left, but the locked call doesn't change.")
+                metric("Kalshi Yes now", engine.currentMarket?.yesMid.map(BotEngine.percent) ?? "—", detail: "The market's own odds",
+                       tip: "Kalshi's implied chance of Up right now: the midpoint of the Yes bid and ask. The benchmark the model has to beat.")
                 metric("Predicting with", engine.model.usesLearnedWeights ? "Learned weights" : (engine.model.marketAnchored ? "Kalshi's odds" : "Starting weights"),
-                       detail: "Trained on \(engine.model.trainingCount.formatted()) windows")
+                       detail: "Trained on \(engine.model.trainingCount.formatted()) windows",
+                       tip: "What sets the bot's probability. It follows Kalshi's odds (or the starting weights) until learned weights meet every condition in the panel below.")
                 Spacer(minLength: 0)
             }
         }
         .font(.callout)
     }
 
-    private func metric(_ label: String, _ value: String, detail: String) -> some View {
+    private func metric(_ label: String, _ value: String, detail: String, tip: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(.caption).foregroundStyle(.secondary)
             Text(value).heroNumber(size: 24)
             Text(detail).font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
+        .infoTip(label, tip)
     }
 }
 
@@ -135,12 +140,15 @@ private struct LearnedWeightsConditions: View {
                 .fixedSize(horizontal: false, vertical: true)
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
                 condition(met: enough, "Enough history",
+                          tip: "The holdout test needs at least \(ModelTrainer.minimumForEvaluation) settled windows to tell skill from luck. Fewer, and learned weights can't be tested at all.",
                           enough ? "\(model.trainingCount.formatted()) settled windows with Kalshi's odds (needs \(ModelTrainer.minimumForEvaluation))."
                                  : "\(model.trainingCount.formatted()) of the \(ModelTrainer.minimumForEvaluation) settled windows needed — \(ModelTrainer.minimumForEvaluation - model.trainingCount) more.")
                 condition(met: mostBlocks, "Win most walk-forward blocks",
+                          tip: "Learned weights must beat \(baseline) in at least \(needed) of the \(folds) time-ordered test blocks, so a gain that comes from one lucky stretch doesn't count.",
                           e == nil ? "Not scored yet."
                                    : "Won \(won) of \(folds); needs \(needed). The newest \(Int(ModelTrainer.walkForwardShare * 100))% of windows (\(e!.holdoutCount.formatted())) is split into \(folds) blocks, each predicted by a model fitted only on the windows before it.")
                 condition(met: overall, "A real gain over \(baseline)",
+                          tip: "Across all the blocks, learned weights must have a lower log-loss than \(baseline) by more than the 95% margin of error. Log-loss punishes confident misses heavily, so it's a strict test of the probabilities.",
                           overallDetail(e, baseline: baseline))
             }
         }
@@ -160,7 +168,7 @@ private struct LearnedWeightsConditions: View {
         return "Log-loss across those blocks: \(f(learned)) learned vs. \(f(prior)) \(baseline). Gain \(gain >= 0 ? "+" : "−")\(milli(abs(gain))) ± \(milli(margin)) milli per window — \(verdict). Accuracy \(BotEngine.percent(e.accuracy)) vs. \(BotEngine.percent(e.priorAccuracy))."
     }
 
-    private func condition(met: Bool, _ title: String, _ detail: String) -> some View {
+    private func condition(met: Bool, _ title: String, tip: String, _ detail: String) -> some View {
         GridRow(alignment: .firstTextBaseline) {
             Image(systemName: met ? "checkmark.circle.fill" : "circle")
                 .foregroundStyle(met ? .green : .secondary)
@@ -170,6 +178,7 @@ private struct LearnedWeightsConditions: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .infoTip("\(title) — \(met ? "met" : "not met")", tip)
     }
 }
 
@@ -255,32 +264,45 @@ private struct IndicatorPane: View {
     private func content(openText: String?, nowText: String?, weightText: String, reading: String, effect: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 14) {
             value("At call", openText)
+                .infoTip("At call", "\(key.title) when this window's call locked, \(engine.callDelayMinutes) min after the open — the value the logged prediction used.")
             Image(systemName: "arrow.right")
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
             value("Now", nowText)
+                .infoTip("Now", "\(key.title) on live data this second. It keeps changing after the call; the locked call doesn't.")
             value("Weight", weightText)
-                .help(weightHelp)
+                .infoTip("Weight", weightHelp)
             value("Windows", windowsText)
-                .help(key.isBaseInput ? "Settled windows the model is trained on; this input is in every one."
-                                      : "Settled windows that have this signal, out of the \(engine.model.trainingCount.formatted()) the model is trained on.")
+                .infoTip("Windows", key.isBaseInput ? "Settled windows the model is trained on; this input is in every one."
+                                      : "Settled windows that have this signal, out of the \(engine.model.trainingCount.formatted()) the model is trained on. Live-only signals build up one window every 15 minutes.")
             Spacer(minLength: 0)
             direction
+                .infoTip("Direction", "Which way this indicator points now. If it carries weight, the way it's actually pushing the live prediction; otherwise the way its reading leans. Green is Up, red is Down, grey is neutral.")
             Text(badgeText)
                 .font(.caption2.weight(.semibold))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(.white.opacity(engine.model.isActive(key) ? 0.16 : 0.07), in: .capsule)
+                .infoTip(badgeText, key.isBaseInput ? "A core model input: always part of the model, with a weight learned from the data."
+                         : engine.model.isActive(key) ? "Promoted: this context signal won three significant held-out trials in a row, so it now carries weight in the model."
+                         : "Context only: shown for information, with no weight in the model, unless it wins promotion in held-out trials.")
         }
 
         Text(key.summary)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+            .infoTip(key.title, key.summary)
 
-        labeled("Reading now", reading)
-        labeled("Effect on prediction", effect)
+        labeled("Reading now", reading,
+                tip: "What the current value of \(key.title) usually means, in plain terms.")
+        labeled("Effect on prediction", effect,
+                tip: "How much this indicator is moving the bot's probability now and, if it carries weight, how much it moved the locked call — in percentage points of P(up).")
         if !key.isBaseInput {
-            labeled(engine.promotionProgress(for: key)?.isPromoted == true ? "Demotion" : "Promotion", promotionText)
+            let isPromoted = engine.promotionProgress(for: key)?.isPromoted == true
+            labeled(isPromoted ? "Demotion" : "Promotion", promotionText,
+                    tip: isPromoted
+                    ? "A promoted signal is demoted after \(BotEngine.trialStreakToChange) counted trials in a row without a significant gain. Trials count only once \(ModelTrainer.freshWindowsPerTrial) new windows have settled since the last counted one."
+                    : "A context signal is promoted after \(BotEngine.trialStreakToChange) significant held-out wins in a row. Each trial counts only once \(ModelTrainer.freshWindowsPerTrial) new windows have settled since the last, and the bar for significance is raised because several signals are tested at once.")
         }
     }
 
@@ -313,7 +335,7 @@ private struct IndicatorPane: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func labeled(_ label: String, _ text: String) -> some View {
+    private func labeled(_ label: String, _ text: String, tip: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label.uppercased())
                 .font(.caption2.weight(.semibold))
@@ -322,6 +344,7 @@ private struct IndicatorPane: View {
             Text(text).fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
+        .infoTip(label.capitalized, tip)
     }
 }
 

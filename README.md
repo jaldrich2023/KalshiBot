@@ -15,7 +15,17 @@ A macOS app that calls every Kalshi 15-minute Bitcoin Up/Down window, shows the 
 <a href="https://github.com/jaldrich2023/KalshiBot/releases">Releases</a>
 </p>
 
-<p align="center"><b>Current version: 2.23.0 (Build 43)</b> · macOS 27.2 or later</p>
+<p align="center">
+<a href="https://github.com/jaldrich2023/KalshiBot/releases/latest"><img src="https://img.shields.io/github/v/release/jaldrich2023/KalshiBot?label=release&color=2ea44f" alt="Latest release"></a>
+<a href="LICENSE"><img src="https://img.shields.io/github/license/jaldrich2023/KalshiBot?color=blue" alt="MIT License"></a>
+<img src="https://img.shields.io/badge/macOS-27.2%2B-black?logo=apple" alt="macOS 27.2 or later">
+<img src="https://img.shields.io/badge/Apple%20silicon-arm64-555" alt="Apple silicon">
+<img src="https://img.shields.io/badge/Swift-SwiftUI-F05138?logo=swift&logoColor=white" alt="Swift and SwiftUI">
+</p>
+
+<p align="center"><a href="https://github.com/jaldrich2023/KalshiBot/releases/latest"><b>⬇︎ Download the latest version</b></a> · <a href="docs/INSTALL.md">Install guide</a></p>
+
+<p align="center"><b>Current version: 2.24.0 (Build 44)</b> · macOS 27.2 or later</p>
 
 ![The dashboard during a live window](docs/images/01-dashboard.jpg)
 
@@ -31,6 +41,7 @@ Kalshi's **KXBTC15M** markets ask one question every 15 minutes: will Bitcoin's 
 - **Recommends trades for your style.** Conservative, Neutral and Aggressive set the required edge, the price range, the entry cutoff and the exits. It suggests entries only on the side it called. You can set your own stop-loss and take-profit percentages, and a stake for profit and loss estimates.
 - **Keeps score honestly.** It reports accuracy with margins of error, Brier scores, and paired comparisons with Kalshi's favorite on the same windows. It shows how many correct calls it needs to reach 70%. Results are broken down by day, hour, week and month.
 - **Trains itself and checks its work.** It learns from up to 180 days of public Kalshi and Coinbase history, saved on disk so later launches fetch only what's new, plus every live window. Learned weights are used only when they beat Kalshi's own odds in most of four walk-forward blocks of windows they weren't trained on, by more than chance. The other indicators are re-tested after every window and promoted only after significant wins on three separate sets of fresh windows, with the bar raised for testing several signals at once.
+- **Explains every number.** Rest the pointer on any figure, setting or button for a popover with what it means, how it's calculated and how to read it.
 - **Runs unattended.** It keeps the Mac awake while it runs (optional), reconnects dropped or silent price streams on its own, and can reset just the model, clear the data after copying the log, or erase everything including settings and the saved download.
 
 ### What to expect

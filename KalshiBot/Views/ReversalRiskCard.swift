@@ -66,7 +66,7 @@ struct ReversalRiskCard: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Chance \(leader) loses: \(BotEngine.percent(risk.flipProbability)), \(risk.level.title)")
-        .help("The chance that the side ahead now (\(leader)) loses at settlement. Low under 15%, Moderate under 35%, High from 35%.")
+        .infoTip("Reversal risk", "The chance that the side ahead now (\(leader)) loses at settlement, from the cushion to the target, the time left and recent volatility, with corrections fitted on past windows. Low under 15%, Moderate under 35%, High from 35%. It can't exceed about 50%: that's the price sitting right on the target.")
         Text("Chance \(leader), ahead now, loses by the close")
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -85,6 +85,7 @@ struct ReversalRiskCard: View {
         .font(.caption2)
         .foregroundStyle(.tertiary)
         .accessibilityHidden(true)
+        .infoTip("Risk gauge", "The reversal risk on a scale from 0% (the result is effectively locked in) to 50% (a coin flip, with the price on the target). Green is low, yellow moderate, red high.")
 
         Divider().opacity(0.5)
 
@@ -92,17 +93,18 @@ struct ReversalRiskCard: View {
             LabeledContent("Kalshi's price says") {
                 Text(BotEngine.percent(kalshi)).monospacedDigit()
             }
-            .help("The same outcome priced by Kalshi: 1 − the price of \(leader). \(risk.blendsKalshi ? "Blended into the figure above, as the history showed improves it." : "Shown for comparison; blending it in didn't improve on held-out windows.")")
+            .infoTip("Kalshi's price says", "The same outcome priced by Kalshi: 1 − the price of \(leader). \(risk.blendsKalshi ? "Blended into the figure above, as the history showed it improves it." : "Shown for comparison; blending it in didn't improve on held-out windows.")")
         }
         LabeledContent("Currently") {
             Text("\(risk.currentlyUp ? "Up" : "Down") by \(BotEngine.usd(risk.cushion))")
                 .monospacedDigit()
         }
+        .infoTip("Currently", "Which side of the target the index estimate is on now, and by how much. If it stays there to the close, \(leader) wins.")
         LabeledContent("Cushion") {
             Text(risk.cushionSigma.isFinite ? "\(risk.cushionSigma.formatted(.number.precision(.fractionLength(1))))σ" : "—")
                 .monospacedDigit()
         }
-        .help("How many standard deviations of remaining price movement the cushion covers")
+        .infoTip("Cushion", "How many standard deviations of the price movement still expected before the close the cushion covers. Under 1σ, a reversal is quite possible; above 2σ, it's rare. It grows as time runs out, even when the price stands still.")
         if let momentum = risk.momentum {
             Divider().opacity(0.5)
             momentumRow(momentum)
@@ -115,14 +117,14 @@ struct ReversalRiskCard: View {
                 Label("Breaks above window high", systemImage: "arrow.up.to.line")
                     .foregroundStyle(.green)
             }
-            .help("Chance the price trades above this window's high before the close")
+            .infoTip("Breaks above window high", "Chance the price trades above this window's high so far, at any moment before the close. A break doesn't decide the result — only the settlement average versus the target does.")
             LabeledContent {
                 Text(BotEngine.percent(down)).monospacedDigit()
             } label: {
                 Label("Breaks below window low", systemImage: "arrow.down.to.line")
                     .foregroundStyle(.red)
             }
-            .help("Chance the price trades below this window's low before the close")
+            .infoTip("Breaks below window low", "Chance the price trades below this window's low so far, at any moment before the close. A break doesn't decide the result — only the settlement average versus the target does.")
         }
 
         if !risk.factors.isEmpty {
@@ -142,6 +144,7 @@ struct ReversalRiskCard: View {
                         }
                     }
                     .accessibilityElement(children: .combine)
+                    .infoTip(factor.title, "\(factor.detail) \(factor.raisesRisk ? "This makes a reversal more likely." : "This makes a reversal less likely.") It's already counted in the figure at the top.")
                 }
             }
         }
@@ -158,7 +161,7 @@ struct ReversalRiskCard: View {
                     .font(.caption)
                 }
             }
-            .help("Every minute the card's figure is logged and, once the window settles, scored. Close agreement between said and happened means the card is well calibrated; small counts are noisy.")
+            .infoTip("Live check", "Every minute the card's figure is logged and, once the window settles, scored. Each band shows the average risk the card said, then how often the leader actually lost, and the count. Close agreement between said and happened means the card is well calibrated; small counts are noisy.")
         }
 
         Spacer(minLength: 0)
@@ -166,6 +169,7 @@ struct ReversalRiskCard: View {
             .font(.caption2)
             .foregroundStyle(.tertiary)
             .fixedSize(horizontal: false, vertical: true)
+            .infoTip("How it's calculated", "A random-walk model of the price to the close, using the time left, recent volatility and the uncertainty in the index estimate itself. Its corrections are refitted on the saved history and kept only where they beat the fixed ones on the newest windows.")
     }
 
     private func footnote(_ calibration: RiskCalibration?) -> String {
@@ -188,7 +192,7 @@ struct ReversalRiskCard: View {
         } label: {
             Text("Momentum strength")
         }
-        .help("How strong the last \(Int(m.seconds / 60)) minutes' move is next to typical volatility: 0% flat, ~50% ordinary, near 100% unusually strong. Context only — in backtests it didn't predict reversals beyond the flip chance above.")
+        .infoTip("Momentum strength", "How strong the last \(Int(m.seconds / 60)) minutes' move is next to typical volatility: 0% flat, ~50% ordinary, near 100% unusually strong. The line underneath says whether it's with or against the side that's winning. Context only — in backtests it didn't predict reversals beyond the flip chance above.")
         Gauge(value: m.strength) { EmptyView() }
             .gaugeStyle(.linearCapacity)
             .tint(color)

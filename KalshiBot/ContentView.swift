@@ -52,13 +52,16 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 StatusPill(isRunning: engine.isRunning)
+                    .infoTip(engine.isRunning ? "Live" : "Paused", engine.isRunning
+                             ? "The bot is collecting prices, calling each window \(engine.callDelayMinutes) min after it opens, and scoring and retraining after each settles. Leave it running to build up live windows."
+                             : "The bot is stopped: no prices are collected and no windows are called. Press Start to resume; windows missed while paused aren't called.")
             }
             ToolbarItemGroup {
                 Button("Copy CSV", systemImage: "doc.on.clipboard") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(PredictionLogView.csv(for: records), forType: .string)
                 }
-                .help("Copy the full prediction log as CSV")
+                .infoTip("Copy CSV", "Copies the full prediction log to the clipboard as CSV — every window with its call, confidence, Kalshi's price, the settlement and the result — ready to paste into a spreadsheet.")
             }
             // The primary action gets its own prominent glass group.
             ToolbarItem {
@@ -67,6 +70,9 @@ struct ContentView: View {
                     engine.isRunning ? engine.stop() : engine.start(context: modelContext)
                 }
                 .buttonStyle(.glassProminent)
+                .infoTip(engine.isRunning ? "Stop" : "Start", engine.isRunning
+                         ? "Stops collecting prices and calling windows. The log, model and settings are kept."
+                         : "Starts collecting prices and calling windows. The first call locks \(engine.callDelayMinutes) min into the next window.")
             }
         }
         .preferredColorScheme(.dark)

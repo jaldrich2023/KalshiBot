@@ -54,6 +54,24 @@ enum ChartLayer: String, CaseIterable, Identifiable {
         }
     }
 
+    /// What the layer draws, for the Layers menu's tip.
+    var detail: String {
+        switch self {
+        case .line: "the trailing 60-second average of the index estimate — what the settlement value would be if the window closed then"
+        case .now: "the latest price, with its label on the right edge"
+        case .candles: "one candle per minute: green closed higher than it opened, red lower, with the wick from low to high"
+        case .movement: "a line joining each minute's close"
+        case .close: "the latest minute's close, labelled on the right edge"
+        case .target: "Kalshi's target; at or above it at the close settles Up"
+        case .settlement: "the shaded final minute, whose 60-second average decides the result"
+        case .highLow: "the window's highest and lowest price so far, with the chance of breaking each"
+        case .closeRange: "the ±1σ range for the closing value, narrowing as time runs out"
+        case .trend: "a straight-line fit through the window's prices — descriptive, not a forecast"
+        case .projection: "the expected path of the 60-second average to the close if the price holds"
+        case .exits: "the stop-loss and take-profit prices for the called side, from the Strategy card"
+        }
+    }
+
     static let priceChart: [ChartLayer] = [.line, .now, .target, .settlement, .highLow, .closeRange, .trend, .projection, .exits]
     static let candleChart: [ChartLayer] = [.candles, .movement, .close, .target, .settlement, .highLow, .trend]
 
@@ -97,7 +115,7 @@ struct ChartLayerToggles: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help("Show or hide each line and marker on this chart")
+        .infoTip("Layers", "Show or hide each line and marker on this chart; your choice is remembered. " + layers.map { "\($0.title): \($0.detail)." }.joined(separator: " ") + " Rest the pointer on the chart to read the price at any moment.")
     }
 
     private var hiddenCount: Int { layers.count { !ChartLayer.isShown($0, hidden: hidden) } }

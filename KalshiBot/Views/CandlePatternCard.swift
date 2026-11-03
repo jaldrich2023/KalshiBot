@@ -43,11 +43,15 @@ struct CandlePatternCard: View {
                 Text(primary.strengthTitle)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
+                    .infoTip("Pattern strength", "How reliable this pattern is traditionally considered, from weak to strong. It's chart-reading convention: on these 15-minute windows no candle pattern predicted the result in testing.")
             }
         }
+        .infoTip(primary?.name ?? "No clear pattern", primary.map { "\($0.meaning) It's formed by the last \($0.candleCount) one-minute candle\($0.candleCount == 1 ? "" : "s"), and reads \($0.bias.title.lowercased())." }
+                 ?? "The latest one-minute candles don't match any of the patterns the bot recognizes.")
 
         MiniCandles(candles: Array(analysis.candles.suffix(8)), highlightedCount: highlighted)
             .frame(height: 70)
+            .infoTip("Latest candles", "The last eight completed one-minute candles of the index estimate. The candles that form the pattern are bright; the rest are dimmed. Green closed higher than it opened, red lower; the thin lines are each minute's high and low.")
 
         if let primary {
             Text(primary.meaning)
@@ -64,6 +68,7 @@ struct CandlePatternCard: View {
                 Text(implication)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .infoTip("For this window", "What the pattern's usual reading would mean for this window, given where the price is against the target and the time left. Informational only — the pattern isn't a model input.")
         }
 
         if analysis.patterns.count > 1 {
@@ -71,6 +76,7 @@ struct CandlePatternCard: View {
                 Text("Also detected").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 ForEach(analysis.patterns.dropFirst()) { pattern in
                     Text("\(pattern.name) · \(pattern.bias.title.lowercased())")
+                        .infoTip(pattern.name, pattern.meaning.isEmpty ? "Also matched by the latest candles; it reads \(pattern.bias.title.lowercased())." : pattern.meaning)
                 }
             }
         }
@@ -81,6 +87,7 @@ struct CandlePatternCard: View {
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
+                .infoTip("Candle details", "When the latest one-minute candle closed, and the trend in the candles before the pattern, which decides whether a reversal pattern applies. Candle patterns are shown for context only; they aren't used by the model.")
         }
     }
 
