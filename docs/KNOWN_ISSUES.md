@@ -1,6 +1,6 @@
 # Known issues and limitations
 
-These are known, documented limitations of Kalshi Bot 2.19.2. They aren't treated as bugs.
+These are known, documented limitations of Kalshi Bot 2.20.0. They aren't treated as bugs.
 
 ## Predictions
 

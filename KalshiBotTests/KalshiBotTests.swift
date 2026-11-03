@@ -1440,11 +1440,21 @@ struct TrackingWeightTests {
     }
 
     @Test func weightedCompositeLeansTowardTheSteadyExchange() {
-        let mids: [(id: String, mid: Double)] = [("a", 80_000), ("b", 80_010), ("c", 80_020)]
+        // Seven in line: the highest and lowest are trimmed, leaving five in the average,
+        // so the 25% cap (above an equal 20% share) leaves room to weight.
+        let mids: [(id: String, mid: Double)] = [("lo", 79_990), ("a", 80_000), ("b", 80_005), ("c", 80_010),
+                                                 ("d", 80_015), ("e", 80_020), ("hi", 80_030)]
         let equal = LivePriceFeed.combine(mids).composite!.price
-        let weighted = LivePriceFeed.combine(mids, weights: ["a": 10, "b": 1, "c": 1]).composite!.price
+        let weighted = LivePriceFeed.combine(mids, weights: ["a": 10, "b": 1, "c": 1, "d": 1, "e": 1]).composite!.price
         #expect(abs(equal - 80_010) < 1e-9)
-        #expect(weighted < equal)
+        #expect(weighted < equal)                 // leans toward "a"
+    }
+
+    @Test func withFourOrFewerSourcesWeightsCannotApply() {
+        // An equal share is already at or above the cap, so the average stays equal.
+        let mids: [(id: String, mid: Double)] = [("a", 80_000), ("b", 80_010), ("c", 80_020)]
+        let weighted = LivePriceFeed.combine(mids, weights: ["a": 10, "b": 1, "c": 1]).composite!.price
+        #expect(abs(weighted - 80_010) < 1e-9)
     }
 
     @Test func trackingWeightsFavorSteadyOffsets() {
@@ -1472,5 +1482,39 @@ struct CombinationSignalTests {
             #expect(FeatureKey.promotionCandidates.contains(key))
             #expect(key.priorWeight(marketAnchored: true) == 0)
         }
+    }
+}
+
+struct CallsLikeThisTests {
+    @Test func bandsAreFivePointsWideWithExactEdgesInTheirOwnBand() {
+        #expect(BotEngine.confidenceBand(0.74) == 70)
+        #expect(BotEngine.confidenceBand(0.70) == 70)
+        #expect(BotEngine.confidenceBand(0.5) == 50)
+        #expect(BotEngine.confidenceBand(0.999) == 95)
+    }
+
+    @Test func historyTalliesTheFavoriteByMinuteAndBand() {
+        func market(_ i: Int, up: Bool) -> KalshiMarket {
+            let open = Date(timeIntervalSince1970: 1_793_000_000 + Double(i) * 900)
+            let json = """
+            {"ticker":"T\(i)","status":"finalized","open_time":"\(ISO8601DateFormatter().string(from: open))",
+             "close_time":"\(ISO8601DateFormatter().string(from: open.addingTimeInterval(900)))","floor_strike":80000,
+             "result":"\(up ? "yes" : "no")"}
+            """
+            let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+            return try! d.decode(KalshiMarket.self, from: Data(json.utf8))
+        }
+        let markets = [market(0, up: true), market(1, up: false), market(2, up: true)]
+        var cache = HistoryCache()
+        // At +3: two windows priced 72% Up (one won), one priced 28% Up (Down favored, lost).
+        cache.merge(mids: [180: ["T0": 0.72, "T1": 0.72, "T2": 0.28]], checked: ["T0", "T1", "T2"])
+        let history = BotEngine.confidenceHistory(markets: markets, cache: cache)
+        #expect(history["3:70"]?.total == 3)
+        #expect(history["3:70"]?.won == 1)
+    }
+
+    @Test func presetsSetCallTimeAndThreshold() {
+        #expect(BotEngine.CallPreset.highHitRate.minutes == 9 && BotEngine.CallPreset.highHitRate.confidence == 0.70)
+        #expect(BotEngine.CallPreset.standard.minutes == 3 && BotEngine.CallPreset.standard.confidence == 0.60)
     }
 }

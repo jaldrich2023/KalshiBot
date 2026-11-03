@@ -5,6 +5,26 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.20.0] — 2026-11-03 · Build 38
+
+### Added
+- **"Calls like this"** on the Prediction card: how often past calls in the same 5-point
+  confidence band and call minute were right, e.g. "Calls like this (70–75% at +3 min)
+  won 77% of 1,448 past windows." Tallied from the saved history at each rebuild.
+- **Presets** in the Strategy card: Standard (+3 min, ≥60%) and High hit rate (+9 min,
+  ≥70%), which sets the call time and threshold together. High hit rate was right 88%
+  of the time in 6,459 past windows versus 73%, calling about 71% of windows; it raises
+  accuracy, not profit.
+
+### Fixed
+- A weighting test assumed the 25% cap could apply with three sources; with four or
+  fewer, an equal share is already at or above the cap, so the average stays equal (as
+  designed). The full suite, including the 2.17–2.19 trainer, combination and weighting
+  tests, now passes (151 passed, 1 long research test skipped).
+- Three Swift concurrency warnings: the call-time options and the confidence-band width
+  are now nonisolated constants, since the history tally that reads them runs off the
+  main actor.
+
 ## [2.19.2] — 2026-11-03 · Build 37
 
 ### Changed

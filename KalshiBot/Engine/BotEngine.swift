@@ -96,7 +96,7 @@ final class BotEngine {
     /// Minutes after the open the call can lock at: any whole minute except the first
     /// and last three. Later calls are right more often — more of the window has played
     /// out — but Kalshi's price has moved too.
-    static let callTimeOptions = Array(3...12)
+    nonisolated static let callTimeOptions = Array(3...12)
 
     /// When the call locks, in minutes after the open. The model's history is rebuilt
     /// at the same moment (from Kalshi's 1-minute candles), so live calls match training.
@@ -110,12 +110,53 @@ final class BotEngine {
 
     var callDelay: TimeInterval { Double(callDelayMinutes) * 60 }
 
+    /// One-click combinations of call time and confidence threshold.
+    enum CallPreset: String, CaseIterable, Identifiable {
+        case standard, highHitRate
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .standard: "Standard (+3 min, ≥60%)"
+            case .highHitRate: "High hit rate (+9 min, ≥70%)"
+            }
+        }
+        var minutes: Int { self == .standard ? 3 : 9 }
+        var confidence: Double { self == .standard ? 0.60 : 0.70 }
+    }
+
+    func apply(_ preset: CallPreset) {
+        minimumCallConfidence = preset.confidence
+        if callDelayMinutes != preset.minutes { callDelayMinutes = preset.minutes }
+        log("Preset: \(preset.title)")
+    }
+
+    var activePreset: CallPreset? {
+        CallPreset.allCases.first { $0.minutes == callDelayMinutes && $0.confidence == minimumCallConfidence }
+    }
+
     /// Calls are skipped if the bot can't make one within 30s of the call time (e.g. it
     /// launched mid-window), so every logged call is made at the same moment.
     var maxPredictionDelay: TimeInterval { callDelay + 30 }
 
     /// How often Kalshi's favorite won at each call time, over the rebuilt history.
     private(set) var callTimeAccuracy: [Int: Double] = [:]
+    /// Past windows by call minute and 5-point confidence band ("3:70" = +3 min, 70–75%):
+    /// how many there were and how many the favorite won. Shown as "calls like this".
+    private(set) var confidenceHistory: [String: (won: Int, total: Int)] = [:]
+    nonisolated static let confidenceBandWidth = 0.05
+
+    /// The band a confidence falls in, e.g. 0.74 → 70.
+    nonisolated static func confidenceBand(_ confidence: Double) -> Int {
+        // The tiny nudge keeps exact edges (0.70) in their own band despite rounding.
+        min(Int((confidence / confidenceBandWidth + 1e-9).rounded(.down)) * Int(confidenceBandWidth * 100), 95)
+    }
+
+    /// How past calls at this confidence and call minute did.
+    func callsLikeThis(confidence: Double) -> (band: Int, won: Int, total: Int)? {
+        let band = Self.confidenceBand(confidence)
+        guard let entry = confidenceHistory["\(callDelayMinutes):\(band)"], entry.total >= 20 else { return nil }
+        return (band, entry.won, entry.total)
+    }
 
     /// Context signals promoted into the model by the trials.
     private(set) var promoted: Set<FeatureKey> = []
@@ -255,6 +296,7 @@ final class BotEngine {
         static let lastResetAt = "lastResetAt"
         static let callDelayMinutes = "callDelayMinutes"
         static let callTimeAccuracy = "callTimeAccuracy"
+        static let confidenceHistory = "confidenceHistory"
         static let promoted = "promotedFeatures"
         static let trialStreaks = "trialStreaks"
         static let trialMarks = "trialMarks"
@@ -304,6 +346,9 @@ final class BotEngine {
         promoted = savedPromotions
         trialStreaks = defaults.dictionary(forKey: Keys.trialStreaks) as? [String: Int] ?? [:]
         trialMarks = defaults.dictionary(forKey: Keys.trialMarks) as? [String: Int] ?? [:]
+        if let stored = defaults.dictionary(forKey: Keys.confidenceHistory) as? [String: [Int]] {
+            confidenceHistory = stored.compactMapValues { $0.count == 2 ? (won: $0[0], total: $0[1]) : nil }
+        }
         if let stored = defaults.dictionary(forKey: Keys.callTimeAccuracy) as? [String: Double] {
             callTimeAccuracy = Dictionary(uniqueKeysWithValues: stored.compactMap { key, value in Int(key).map { ($0, value) } })
         }
@@ -1090,6 +1135,26 @@ final class BotEngine {
         }
         UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: callTimeAccuracy.map { (String($0.key), $0.value) }),
                                   forKey: Keys.callTimeAccuracy)
+        confidenceHistory = Self.confidenceHistory(markets: markets, cache: cache)
+        UserDefaults.standard.set(confidenceHistory.mapValues { [$0.won, $0.total] }, forKey: Keys.confidenceHistory)
+    }
+
+    /// Tallies past windows by call minute and confidence band: how often Kalshi's
+    /// favorite — the side the bot calls when following Kalshi's odds — won.
+    nonisolated static func confidenceHistory(markets: [KalshiMarket], cache: HistoryCache) -> [String: (won: Int, total: Int)] {
+        var result: [String: (won: Int, total: Int)] = [:]
+        for minutes in callTimeOptions {
+            let mids = cache.mids(at: TimeInterval(minutes * 60))
+            for market in markets {
+                guard let mid = mids[market.ticker], let up = market.settledUp else { continue }
+                let key = "\(minutes):\(confidenceBand(max(mid, 1 - mid)))"
+                var entry = result[key] ?? (0, 0)
+                entry.total += 1
+                if (mid >= 0.5) == up { entry.won += 1 }
+                result[key] = entry
+            }
+        }
+        return result
     }
 
     /// A new call time: rebuilt history is redone at the new moment. Live examples made

@@ -208,6 +208,14 @@ struct DashboardView: View {
                     .help("Calls lock \(engine.callDelayMinutes) min after the open — the same moment the model's history is built at")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let like = engine.callsLikeThis(confidence: record.confidence) {
+                    Label("Calls like this (\(like.band)–\(like.band + 5)% at +\(engine.callDelayMinutes) min) won \(BotEngine.percent(Double(like.won) / Double(like.total))) of \(like.total.formatted()) past windows.",
+                          systemImage: "clock.arrow.circlepath")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help("How often Kalshi's favorite won in past windows priced in the same 5-point band at the same call time — what this confidence has been worth historically.")
+                }
             } else {
                 Text("No prediction locked for this window")
                     .foregroundStyle(.secondary)

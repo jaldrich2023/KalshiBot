@@ -133,6 +133,17 @@ struct StrategyCard: View {
         @Bindable var engine = engine
         Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
             GridRow {
+                Text("Preset").foregroundStyle(.secondary)
+                Menu(engine.activePreset?.title ?? "Custom") {
+                    ForEach(BotEngine.CallPreset.allCases) { preset in
+                        Button(preset.title) { engine.apply(preset) }
+                    }
+                }
+                .menuStyle(.button)
+                .fixedSize()
+                .help("High hit rate calls later and counts only confident calls: right 88% of the time in 6,459 past windows, versus 73% for Standard, with 71% of windows called. It raises accuracy, not profit — those contracts cost correspondingly more. Changing the call time rebuilds the model's history at the new minute.")
+            }
+            GridRow {
                 Text("Call at").foregroundStyle(.secondary)
                 Picker("Call at", selection: $engine.callDelayMinutes) {
                     ForEach(BotEngine.callTimeOptions, id: \.self) { minutes in
@@ -459,4 +470,5 @@ struct StrategyCard: View {
         case .standAside: nil
         }
     }
+
 }

@@ -2,7 +2,7 @@
 
 Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.
 
-Version 2.19.2 · macOS 27.2 or later · © 2026 I'm The Team, LLC
+Version 2.20.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC
 
 ![The dashboard during a live window](images/01-dashboard.jpg)
 
@@ -75,6 +75,7 @@ Because both the target and the settlement are 60-second averages, the last minu
 Before the call time, the card says "No prediction locked for this window" and shows the live view only. At the call time it locks:
 
 - **The call:** a large **UP** or **DOWN**, with P(up) and the confidence (the probability of the side called).
+- **Calls like this:** how often past calls in the same 5-point confidence band, at the same call minute, were right. For example: "Calls like this (70–75% at +3 min) won 77% of 1,448 past windows."
 - **Live:** Kalshi's Yes and No prices right now, as percentages, with the buy and sell prices in cents.
 - **Bot now:** what the model would say from the current price. This is for information only; the locked call doesn't change.
 
@@ -168,6 +169,7 @@ Underneath, the card shows the bot's fair value, Kalshi's Yes bid and ask, and t
 
 | Setting | Choices | What it does |
 | --- | --- | --- |
+| Preset | Standard (+3 min, ≥60%) or High hit rate (+9 min, ≥70%) | Sets **Call at** and **Calls** together. High hit rate was right 88% of the time in 6,459 past windows (Standard: 73%) and calls about 71% of windows. It raises accuracy, not profit: those contracts cost correspondingly more. Changing either setting by hand shows **Custom**. |
 | Call at | +3 to +12 min | When each window's call locks. The menu shows how often calls at that minute were right in history. Later calls are right more often, but Kalshi's price has moved too. Changing it rebuilds the model's history at the new time. |
 | Calls | All calls, or only ≥60% (the default), 65%, 70%, 75% or 80% confident | Calls below the threshold are marked **No call** and left out of accuracy and performance. Every window is still logged and trained on. |
 | Stop-loss | Style default, or Custom: 5%–70% | The share of the price paid that you're willing to lose before exiting. |
