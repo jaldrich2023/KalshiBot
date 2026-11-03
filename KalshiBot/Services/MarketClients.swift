@@ -21,8 +21,16 @@ nonisolated enum ClientError: Error, LocalizedError {
     }
 }
 
-/// GET with retries: rate limiting (429) and server errors (5xx) are retried up to
-/// `attempts` times, waiting for the server's Retry-After when given, else 1s, 2s, 4s…
+/// Network failures worth another try: the request may well succeed a moment later.
+private nonisolated func isTransient(_ error: Error) -> Bool {
+    guard let error = error as? URLError else { return false }
+    return [.timedOut, .networkConnectionLost, .cannotConnectToHost, .notConnectedToInternet,
+            .dnsLookupFailed, .cannotFindHost, .resourceUnavailable].contains(error.code)
+}
+
+/// GET with retries: rate limiting (429), server errors (5xx) and transient network
+/// failures are retried up to `attempts` times, waiting for the server's Retry-After
+/// when given, else 1s, 2s, 4s… (at most 10s).
 private nonisolated func fetchData(_ urlString: String, session: URLSession = .shared,
                                    timeout: TimeInterval = 8, attempts: Int = 3) async throws -> Data {
     guard let url = URL(string: urlString) else { throw ClientError.badResponse(urlString) }
@@ -32,7 +40,14 @@ private nonisolated func fetchData(_ urlString: String, session: URLSession = .s
 
     var attempt = 0
     while true {
-        let (data, response) = try await session.data(for: request)
+        let data: Data, response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch where isTransient(error) && attempt + 1 < attempts {
+            attempt += 1
+            try await Task.sleep(for: .seconds(min(Double(1 << (attempt - 1)), 10)))
+            continue
+        }
         guard let http = response as? HTTPURLResponse else { throw ClientError.badResponse(url.host() ?? urlString) }
         if (200..<300).contains(http.statusCode) { return data }
 
@@ -55,7 +70,7 @@ private nonisolated func double(_ any: Any?) -> Double? {
 // MARK: - Kalshi
 
 /// A KXBTC15M market ("BTC price up in next 15 mins?").
-nonisolated struct KalshiMarket: Decodable, Sendable, Equatable {
+nonisolated struct KalshiMarket: Codable, Sendable, Equatable {
     let ticker: String
     let status: String
     let openTime: Date
@@ -129,7 +144,8 @@ nonisolated struct KalshiClient: Sendable {
         repeat {
             let url = "\(base)/markets?series_ticker=\(Self.seriesTicker)&status=settled&limit=200"
                 + "&min_close_ts=\(Int(date.timeIntervalSince1970))" + (cursor.isEmpty ? "" : "&cursor=\(cursor)")
-            let page = try decoder.decode(MarketsResponse.self, from: try await fetchData(url))
+            // History pages: five tries each, so one slow moment doesn't abandon the rebuild.
+            let page = try decoder.decode(MarketsResponse.self, from: try await fetchData(url, attempts: 5))
             all += page.markets
             cursor = page.markets.isEmpty ? "" : (page.cursor ?? "")
             // ~30 pages for 60 days; pace them so live polling keeps its share of the rate limit.
@@ -169,11 +185,13 @@ nonisolated struct KalshiClient: Sendable {
     /// Fetched in batches; Kalshi caps a request at 10,000 candles (markets × minutes).
     /// Each batch is retried with backoff; a batch that still fails is skipped (its
     /// windows are retried on the next catch-up) rather than failing the whole fetch.
+    /// `checked` lists the windows whose batch succeeded, with or without odds.
     func yesMids(_ markets: [KalshiMarket], at offsets: [TimeInterval])
-        async -> (mids: [TimeInterval: [String: Double]], failedBatches: Int, lastError: Error?) {
+        async -> (mids: [TimeInterval: [String: Double]], checked: Set<String>, failedBatches: Int, lastError: Error?) {
         let sorted = markets.sorted { $0.openTime < $1.openTime }
         let latestOffset = Int((offsets.max() ?? 60) / 60)
         var mids: [TimeInterval: [String: Double]] = [:]
+        var checked = Set<String>()
         var failedBatches = 0
         var lastError: Error?
         var index = 0
@@ -207,6 +225,7 @@ nonisolated struct KalshiClient: Sendable {
                 failedBatches += 1
                 continue
             }
+            checked.formUnion(batch.map(\.ticker))
 
             let opens = Dictionary(uniqueKeysWithValues: batch.map { ($0.ticker, Int($0.openTime.timeIntervalSince1970)) })
             for market in response.markets {
@@ -221,7 +240,7 @@ nonisolated struct KalshiClient: Sendable {
             }
             try? await Task.sleep(for: .milliseconds(120))
         }
-        return (mids, failedBatches, lastError)
+        return (mids, checked, failedBatches, lastError)
     }
 
     /// The ticker of the window closing at `close`, e.g. "KXBTC15M-26OCT272300-00" for
@@ -275,7 +294,8 @@ nonisolated struct CoinbaseClient: Sendable {
         let iso = ISO8601DateFormatter()
         while chunkStart < end {
             let chunkEnd = min(chunkStart.addingTimeInterval(chunk - 60), end)
-            candles += try await oneMinuteCandles(query: "&start=\(iso.string(from: chunkStart))&end=\(iso.string(from: chunkEnd))")
+            candles += try await oneMinuteCandles(query: "&start=\(iso.string(from: chunkStart))&end=\(iso.string(from: chunkEnd))",
+                                                  attempts: 5)
             chunkStart = chunkEnd.addingTimeInterval(60)
             // Stay well under Coinbase's public rate limit.
             try await Task.sleep(for: .milliseconds(150))
@@ -285,8 +305,8 @@ nonisolated struct CoinbaseClient: Sendable {
         return candles.sorted { $0.time < $1.time }.filter { seen.insert($0.time).inserted }
     }
 
-    private func oneMinuteCandles(query: String) async throws -> [Candle] {
-        let data = try await fetchData("\(base)/candles?granularity=60\(query)")
+    private func oneMinuteCandles(query: String, attempts: Int = 3) async throws -> [Candle] {
+        let data = try await fetchData("\(base)/candles?granularity=60\(query)", attempts: attempts)
         // Rows are [time, low, high, open, close, volume], newest first.
         let rows = try JSONDecoder().decode([[Double]].self, from: data)
         return rows.compactMap { r in
@@ -302,12 +322,15 @@ nonisolated struct CoinbaseClient: Sendable {
 /// CF Benchmarks' BRTI isn't publicly streamed, so we approximate it with the
 /// median mid-price across several of its constituent exchanges.
 nonisolated struct CompositePriceClient: Sendable {
-    /// US-reachable BTC spot books priced in dollars (or USDC), checked Oct 31 to quote
-    /// within ~$40 of each other with tight spreads. Excluded: Paxos/itBit, LMAX and
-    /// Bullish (not reachable from the US), Bitfinex (~$150 premium), USDT books
-    /// (Tether basis), and Uphold, Cex.io, Bitso and bitFlyer (spreads of $20–$200, or stale).
+    /// US-reachable BTC spot books priced in dollars (or USDC), checked Oct 31 and Nov 2
+    /// to quote within ~$40 of each other with tight spreads. OKX and KuCoin (USDC) sit
+    /// ~$30 above the dollar books; their per-exchange BRTI offsets remove that. Excluded:
+    /// Paxos/itBit, LMAX and Bullish (not reachable from the US), Bybit (blocks the US),
+    /// Bitfinex (~$150 premium), USDT books (Tether basis), Gemini's USDC book (the same
+    /// book as its USD one), and Uphold, Cex.io, Bitso, bitFlyer and Bitstamp's USDC book
+    /// (spreads of $14–$200, or stale).
     enum Exchange: String, CaseIterable, Sendable {
-        case coinbase, kraken, bitstamp, gemini, cryptocom, binanceUS, deribitUSDC, krakenUSDC
+        case coinbase, kraken, bitstamp, gemini, cryptocom, binanceUS, deribitUSDC, krakenUSDC, okxUSDC, kucoinUSDC
 
         var title: String {
             switch self {
@@ -319,6 +342,8 @@ nonisolated struct CompositePriceClient: Sendable {
             case .binanceUS: "Binance.US"
             case .deribitUSDC: "Deribit (USDC)"
             case .krakenUSDC: "Kraken (USDC)"
+            case .okxUSDC: "OKX (USDC)"
+            case .kucoinUSDC: "KuCoin (USDC)"
             }
         }
 
@@ -332,6 +357,8 @@ nonisolated struct CompositePriceClient: Sendable {
             case .binanceUS: "https://api.binance.us/api/v3/ticker/bookTicker?symbol=BTCUSD"
             case .deribitUSDC: "https://www.deribit.com/api/v2/public/ticker?instrument_name=BTC_USDC"
             case .krakenUSDC: "https://api.kraken.com/0/public/Ticker?pair=XBTUSDC"
+            case .okxUSDC: "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDC"
+            case .kucoinUSDC: "https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=BTC-USDC"
             }
         }
 
@@ -361,6 +388,14 @@ nonisolated struct CompositePriceClient: Sendable {
                 let result = json["result"] as? [String: Any]
                 bid = double(result?["best_bid_price"])
                 ask = double(result?["best_ask_price"])
+            case .okxUSDC:
+                let entry = (json["data"] as? [[String: Any]])?.first
+                bid = double(entry?["bidPx"])
+                ask = double(entry?["askPx"])
+            case .kucoinUSDC:
+                let entry = json["data"] as? [String: Any]
+                bid = double(entry?["bestBid"])
+                ask = double(entry?["bestAsk"])
             }
             guard let bid, let ask, bid > 0, ask >= bid else { return nil }
             return (bid, ask)

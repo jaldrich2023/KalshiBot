@@ -5,6 +5,45 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.15.0] — 2026-11-02 · Build 28
+
+### Added
+- **Two more price sources:** OKX and KuCoin (BTC-USDC books with 10¢ spreads), for ten in
+  all. Paxos, LMAX and Bullish are still unreachable from the US, Bybit blocks the US,
+  and Gemini's USDC book is the same book as its USD one.
+- **Per-exchange BRTI offsets.** At every window open, each exchange's 60-second average
+  is compared with Kalshi's official target. Once three exchanges have been measured at
+  six opens, each one's median gap is applied before averaging (unmeasured exchanges use
+  the typical gap), and the overall calibration restarts on the corrected price. The
+  composite no longer jumps when a source with a premium drops out or comes back.
+- **Tracking error** in the Current Window card: how far the index estimate typically was
+  from the official target at recent opens.
+- **Saved market history.** Kalshi's settled windows and odds, and Coinbase's 1-minute
+  candles, are saved in the app's Caches folder (`MarketHistory.v1.json`). Restarts,
+  resets and call-time changes fetch only what's new. Call-time accuracy now uses every
+  saved window.
+- **Keep Mac awake** setting in the Strategy card (on by default). With it off, the Mac can
+  sleep, but App Nap still can't slow the bot while the Mac is awake.
+- **Reset Model, Keep Data**: resets the weights, promotions and trials and retrains on
+  the data already collected, keeping the log and accuracy.
+
+### Changed
+- New installs skip calls under 60% confidence by default (**Calls › Only ≥60%
+  confident**); existing settings are kept.
+- The full reset is now **Copy Log, Then Clear All Data**: the prediction log is copied to
+  the clipboard as CSV first. It also clears the exchange offsets and tracking error, but
+  keeps the saved market download, so the rebuild takes seconds.
+- History downloads try each request five times, and every request now also retries
+  timeouts and dropped connections, not just server errors.
+- The source list shows how long a dropped source has been out instead of 0%, and its
+  tooltip gives the exchange's offset and how often its stream has reconnected.
+
+### Fixed
+- A price stream that stayed connected but went silent was never replaced, leaving that
+  source stale until restart. A stream with no message for 30 seconds is now reconnected.
+- The Strategy card warns while **Use Kalshi odds** is off, the setting behind calls that
+  disagreed with the market for no good reason.
+
 ## [2.14.2] — 2026-11-02 · Build 27
 
 ### Fixed

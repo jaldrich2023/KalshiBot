@@ -631,9 +631,18 @@ struct LivePriceFeedTests {
         #expect(after.price > before.price)
     }
 
-    @Test func eightSources() {
-        #expect(LivePriceFeed.sourceCount == 8)
-        #expect(LivePriceFeed.polled.count == 5)
+    @Test func tenSources() {
+        #expect(LivePriceFeed.sourceCount == 10)
+    }
+
+    @Test func parsesTheUSDCBooks() {
+        let okx = Data(#"{"code":"0","data":[{"instId":"BTC-USDC","askPx":"76941.8","bidPx":"76941.7"}]}"#.utf8)
+        let okxQuote = CompositePriceClient.Exchange.okxUSDC.quote(from: okx)
+        #expect(okxQuote?.bid == 76941.7 && okxQuote?.ask == 76941.8)
+        let kucoin = Data(#"{"code":"200000","data":{"bestBid":"76936.2","bestAsk":"76936.3","price":"76951.4"}}"#.utf8)
+        let kucoinQuote = CompositePriceClient.Exchange.kucoinUSDC.quote(from: kucoin)
+        #expect(kucoinQuote?.bid == 76936.2 && kucoinQuote?.ask == 76936.3)
+        #expect(LivePriceFeed.polled.count == 7)
     }
 }
 
@@ -1203,5 +1212,96 @@ struct RecommendationFollowsTheCallTests {
         // Call Down; No is cheap relative to fair value.
         let advice = StrategyAdvisor.advise(fairUp: 0.20, yesBid: 0.40, yesAsk: 0.42, secondsRemaining: 400, calledUp: false)
         #expect(advice.action == .buyNo)
+    }
+}
+
+struct HistoryCacheTests {
+    func market(_ minutes: Double, up: Bool = true) -> KalshiMarket {
+        let open = Date(timeIntervalSince1970: 1_793_000_000 + minutes * 60)
+        let json = """
+        {"ticker":"T\(Int(minutes))","status":"finalized","open_time":"\(ISO8601DateFormatter().string(from: open))",
+         "close_time":"\(ISO8601DateFormatter().string(from: open.addingTimeInterval(900)))","floor_strike":80000,
+         "result":"\(up ? "yes" : "no")"}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try! decoder.decode(KalshiMarket.self, from: Data(json.utf8))
+    }
+
+    func candle(_ minutes: Double, close: Double = 80_000) -> Candle {
+        Candle(time: Date(timeIntervalSince1970: 1_793_000_000 + minutes * 60), open: close, high: close + 5,
+               low: close - 5, close: close, volume: 2)
+    }
+
+    @Test func savesAndLoadsEverything() throws {
+        var cache = HistoryCache()
+        cache.merge(markets: [market(0), market(15, up: false)])
+        cache.merge(mids: [180: ["T0": 0.62], 240: ["T0": 0.7]], checked: ["T0", "T15"])
+        cache.merge(candles: [candle(1, close: 80_010), candle(0)])
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("history-\(UUID()).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        cache.save(to: url)
+        let loaded = HistoryCache.load(from: url)
+        #expect(loaded == cache)
+        #expect(loaded.candles.map(\.close) == [80_000, 80_010])   // sorted by time
+        #expect(loaded.markets["T15"]?.settledUp == false)
+        #expect(loaded.mids(at: 180) == ["T0": 0.62])
+    }
+
+    @Test func missingFileOrOldVersionIsEmpty() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID()).json")
+        #expect(HistoryCache.load(from: url) == HistoryCache())
+    }
+
+    @Test func onlyUncoveredCandleRangesAreFetched() {
+        var cache = HistoryCache()
+        #expect(cache.missingCandleRanges(from: candle(0).time, to: candle(10).time).count == 1)
+        cache.merge(candles: (0...10).map { candle(Double($0)) })
+        // Fully covered: nothing to fetch.
+        #expect(cache.missingCandleRanges(from: candle(2).time, to: candle(8).time).isEmpty)
+        // Extends past the end: only the new minutes.
+        let after = cache.missingCandleRanges(from: candle(5).time, to: candle(20).time)
+        #expect(after.count == 1 && after[0].start == candle(11).time && after[0].end == candle(20).time)
+        // Starts before: only the earlier minutes.
+        let before = cache.missingCandleRanges(from: candle(-10).time, to: candle(4).time)
+        #expect(before.count == 1 && before[0].start == candle(-10).time && before[0].end == candle(-1).time)
+    }
+
+    @Test func pruneDropsOldWindowsAndCandles() {
+        var cache = HistoryCache()
+        cache.merge(markets: [market(0), market(600)])
+        cache.merge(mids: [180: ["T0": 0.5, "T600": 0.6]], checked: ["T0", "T600"])
+        cache.merge(candles: [candle(0), candle(590)])
+        cache.prune(before: market(600).openTime)
+        #expect(Set(cache.markets.keys) == ["T600"])
+        #expect(cache.oddsChecked == ["T600"])
+        #expect(cache.candles.map(\.time) == [candle(590).time])   // kept: within 3 h of the cutoff
+    }
+}
+
+struct SourceOffsetTests {
+    @Test func offsetsWaitForEnoughExchanges() {
+        let six = Array(repeating: -12.0, count: BotEngine.minimumOffsetSamples)
+        #expect(BotEngine.offsets(from: ["coinbase": six, "kraken": six]).isEmpty)
+        #expect(BotEngine.offsets(from: ["coinbase": six, "kraken": six, "gemini": [-12]]).isEmpty)
+    }
+
+    @Test func measuredExchangesUseTheirOwnMedianOthersTheTypical() {
+        let samples: [String: [Double]] = [
+            "coinbase": [-10, -11, -12, -13, -14, -15],
+            "kraken": [-20, -20, -20, -20, -20, 500],     // one wild sample barely moves a median
+            "bitstamp": [-5, -5, -5, -5, -5, -5],
+        ]
+        let offsets = BotEngine.offsets(from: samples)
+        #expect(offsets["coinbase"] == -12.5)
+        #expect(offsets["kraken"] == -20)
+        #expect(offsets["bitstamp"] == -5)
+        #expect(offsets["gemini"] == -12.5)                // median of the measured three
+        #expect(offsets.count == CompositePriceClient.Exchange.allCases.count)
+    }
+
+    @Test func correctedMidAddsTheOffset() {
+        let status = SourceStatus(source: .coinbase, mid: 80_000, state: .used, offset: -12.5)
+        #expect(status.corrected == 79_987.5)
     }
 }

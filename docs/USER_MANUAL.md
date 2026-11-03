@@ -2,7 +2,7 @@
 
 Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.
 
-Version 2.14 · macOS 27.2 or later · © 2026 I'm The Team, LLC
+Version 2.15 · macOS 27.2 or later · © 2026 I'm The Team, LLC
 
 ![The dashboard during a live window](images/01-dashboard.jpg)
 
@@ -28,11 +28,11 @@ You don't need a Kalshi account or any API keys. Kalshi Bot reads only public ma
 ### First launch
 
 1. Open Kalshi Bot. It starts automatically, and the status pill at the top left of the toolbar turns to **Live**.
-2. The **Model** card shows "Rebuilding past windows…". Kalshi Bot downloads up to 180 days of Kalshi market history and Coinbase 1-minute candles, then rebuilds each past window as it looked at the call. This takes about a minute.
+2. The **Model** card shows "Rebuilding past windows…". Kalshi Bot downloads up to 180 days of Kalshi market history and Coinbase 1-minute candles, then rebuilds each past window as it looked at the call. This takes a few minutes the first time. The download is saved, so later launches fetch only what's new.
 3. When the current window reaches the call time (+3 minutes by default), the **Prediction** card locks a call: Up or Down, with a probability.
 4. When the window closes and Kalshi settles it, the call is scored, the **Accuracy** card updates, and the model retrains.
 
-While it's running, Kalshi Bot keeps your Mac from sleeping, so it doesn't miss a window. Click **Stop** in the toolbar to pause it; click **Start** to resume.
+While it's running, Kalshi Bot keeps your Mac from sleeping, so it doesn't miss a window (turn off **Keep Mac awake** in the Strategy card to allow sleep). Click **Stop** in the toolbar to pause it; click **Start** to resume.
 
 ### The toolbar
 
@@ -64,8 +64,10 @@ Because both the target and the settlement are 60-second averages, the last minu
 
 - **The price** is Kalshi Bot's estimate of the BRTI right now, with how far it is above or below the target.
 - **Window, Closes in, Target, Kalshi Yes** show the window's times, the time left, the target price, and Kalshi's live Yes price.
-- **Sources** lists the eight exchange feeds and each one's latest price, its gap to the estimate, and its weight. A ✓ means the source is in use. A source is dropped when its price is off-market (more than 0.05% from the median) or its feed has gone stale. With five or more sources, the highest and lowest are trimmed.
-- **Composite** is the average of the sources in use. **Index est.** applies the **BRTI calibration**, a running correction learned by comparing past composites with Kalshi's published targets.
+- **Sources** lists the ten exchange feeds: Coinbase, Kraken, Bitstamp, Gemini, Crypto.com, Binance.US, Deribit (USDC), Kraken (USDC), OKX (USDC) and KuCoin (USDC). Each row shows the latest price, the gap to the composite (after that exchange's offset), and its weight. A ✓ means the source is in use. A source is dropped when its price is off-market (more than 0.05% from the median) or its feed has gone stale; instead of a weight, it then shows how long it's been out. With five or more sources, the highest and lowest are trimmed. Hover a row for its offset and how often its stream has reconnected.
+- **Per-exchange offsets.** At every window open, each exchange's 60-second average is compared with Kalshi's official target. Once three exchanges have been measured at six opens, each one's typical gap (its median offset) is added to its price before averaging. Exchanges that haven't been measured yet use the typical offset of the others. This keeps the composite steady when a source drops out or comes back.
+- **Composite** is the average of the sources in use. **Index est.** adds the **BRTI calibration**, a running correction for whatever gap remains.
+- **Tracking error** is how far the index estimate typically was (the median) from Kalshi's official target at recent opens. Only windows that finish within about that much of their target are at risk of being misjudged.
 - The window's ticker is shown at the bottom, for example `KXBTC15M-26NOV021815-15`.
 
 ### Prediction
@@ -96,7 +98,7 @@ If **Calls** is set to confident calls only (see chapter 4), the card says how m
 - **Predicting with:** **Kalshi market** while learned adjustments haven't beaten Kalshi's own odds, or **Learned weights** once they have.
 - **Holdout test:** the trained model and Kalshi's price, scored on the newest 20% of windows that the training never saw.
 - **Path to 70% accuracy:** the number of correct calls in a row needed to bring overall accuracy to 70%, or, once it's there, how many misses in a row it can absorb. Each miss on the way adds about 2.3 more needed. The note underneath compares the goal with the calls' average confidence, which is where accuracy tends over time.
-- **Reset Model…** asks for confirmation, then deletes all data and retrains from scratch. See chapter 10.
+- **Reset Model…** offers two choices: reset only the model, or clear all data. See chapter 10.
 
 ### The 60-second average chart
 
@@ -162,10 +164,11 @@ Underneath, the card shows the bot's fair value, Kalshi's Yes bid and ask, and t
 | Setting | Choices | What it does |
 | --- | --- | --- |
 | Call at | +3 to +12 min | When each window's call locks. The menu shows how often calls at that minute were right in history. Later calls are right more often, but Kalshi's price has moved too. Changing it rebuilds the model's history at the new time. |
-| Calls | All calls, or only ≥60%, 65%, 70%, 75% or 80% confident | Calls below the threshold are marked **No call** and left out of accuracy and performance. Every window is still logged and trained on. |
+| Calls | All calls, or only ≥60% (the default), 65%, 70%, 75% or 80% confident | Calls below the threshold are marked **No call** and left out of accuracy and performance. Every window is still logged and trained on. |
 | Stop-loss | Style default, or Custom: 5%–70% | The share of the price paid that you're willing to lose before exiting. |
 | Take profit | Style default, or Custom: 5%–100% | The gain on the price paid at which to sell. If the gain isn't possible at the current price, the card says it's unreachable and no line is drawn. |
-| Use Kalshi odds | On or off | When on, the model starts from Kalshi's price and adjusts it only with signals that have proven themselves. **Leave this on.** With it off, the model uses price signals alone, which is much less accurate and can disagree with the market for no good reason. |
+| Use Kalshi odds | On or off | When on, the model starts from Kalshi's price and adjusts it only with signals that have proven themselves. **Leave this on.** With it off, the model uses price signals alone, which is much less accurate and can disagree with the market for no good reason; the card shows a warning while it's off. |
+| Keep Mac awake | On (default) or off | Stops the Mac from idle-sleeping while the bot runs. With it off, the Mac can sleep and the windows during sleep are missed. |
 
 ### Your position
 
@@ -272,15 +275,19 @@ A timestamped list of what the bot is doing: windows opening, calls locking, set
 
 All data stays on your Mac, in Kalshi Bot's sandboxed container. Nothing is sent anywhere except the public market-data requests described in [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md).
 
-**Reset Model…** in the Model card returns the model to its starting weights and permanently deletes:
+**Reset Model…** in the Model card offers two choices:
 
-- the prediction log and accuracy history,
-- the training history,
-- the price calibration,
-- the call-time statistics,
-- the alerts and the activity log.
+- **Reset Model, Keep Data** returns the weights, promotions and trials to their starting point and retrains on the data already collected. The prediction log, accuracy, training history and calibration are kept.
+- **Copy Log, Then Clear All Data** copies the prediction log to the clipboard as CSV, then permanently deletes:
+  - the prediction log and accuracy history,
+  - the training history,
+  - the price calibration, exchange offsets and tracking error,
+  - the call-time statistics,
+  - the alerts and the activity log.
 
-Your settings are kept. The model then retrains from scratch on Kalshi's full market history, which takes about a minute. To keep a copy of your log, use **Copy CSV** first.
+Your settings and the saved market download are kept, so the model retrains from Kalshi's full market history in seconds. Paste the CSV into a spreadsheet or text file if you want to keep the old log.
+
+The saved market download (`MarketHistory.v1.json`) lives in the app's Caches folder. It holds only public market data, and macOS may clear it to free space; the next rebuild then downloads it again.
 
 ## 11. Troubleshooting
 
@@ -288,15 +295,15 @@ Your settings are kept. The model then retrains from scratch on Kalshi's full ma
 
 **The bot recommends a side that the market clearly disagrees with.** Check that **Use Kalshi odds** is on. With it off, the model uses price signals alone and can disagree with the market for no good reason.
 
-**My 55–60% calls keep losing.** That's expected: a 57% call loses about 43% of the time. Set **Calls** to ≥60% or higher to skip low-confidence windows.
+**My 55–60% calls keep losing.** That's expected: a 57% call loses about 43% of the time. **Calls** skips calls under 60% by default; raise it to skip more.
 
-**Fewer than 8 sources are live.** A source is dropped when its feed goes stale or its price is more than 0.05% away from the others. The composite needs only a few sources, and dropped sources come back on their own.
+**Fewer than 10 sources are live.** A source is dropped when its feed goes stale or its price is more than 0.05% away from the others; the list shows how long it's been out. The composite needs only a few sources. Dropped streams reconnect on their own, and a stream that goes silent for 30 seconds is replaced automatically.
 
 **The Model card says learned adjustments haven't beaten Kalshi's odds.** That's the normal state. It means the bot is following Kalshi's price, which no tested signal has beaten.
 
 **The charts say "Collecting 60s of prices…".** The 60-second average needs a minute of prices after launch or after a gap in the feeds.
 
-**The Model card has said "Rebuilding past windows…" for a long time.** The history download depends on Kalshi's and Coinbase's public APIs, which can be slow or limit requests. Leave the app running; it retries.
+**The Model card has said "Rebuilding past windows…" for a long time.** The first download depends on Kalshi's and Coinbase's public APIs, which can be slow or limit requests. Leave the app running; failed requests are retried, and anything still missing is fetched at the next catch-up (every 15 minutes).
 
 ## 12. Legal
 

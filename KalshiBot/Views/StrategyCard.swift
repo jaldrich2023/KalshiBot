@@ -211,6 +211,22 @@ struct StrategyCard: View {
                     .toggleStyle(.checkbox)
                     .help("Include Kalshi's own Yes price as one of the model's indicators")
             }
+            if !engine.useKalshiOdds {
+                GridRow {
+                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                    Label("Off: the model uses price signals alone, which is much less accurate and can disagree with the market for no good reason. Turn this on unless you're experimenting.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            GridRow {
+                Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                Toggle("Keep Mac awake", isOn: $engine.keepMacAwake)
+                    .toggleStyle(.checkbox)
+                    .help("While the bot runs, stop the Mac from idle-sleeping so no window is missed. Off: the Mac can sleep, and the bot misses the windows while it's asleep.")
+            }
         }
         .font(.callout)
     }

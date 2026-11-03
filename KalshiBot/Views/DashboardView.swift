@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct DashboardView: View {
     @Environment(BotEngine.self) private var engine
@@ -68,7 +69,7 @@ struct DashboardView: View {
                     predictionPanel.frame(width: columnWidth)
                     AccuracyPanel(stats: stats, skipped: records.filter { $0.isResolved && engine.isNoCall($0) }.count)
                         .frame(width: columnWidth)
-                    ModelPanel(stats: stats).frame(width: columnWidth)
+                    ModelPanel(stats: stats, records: records).frame(width: columnWidth)
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 if let market = engine.currentMarket {
@@ -156,6 +157,12 @@ struct DashboardView: View {
                         }
                         .help("Added to the exchange composite so it tracks CF Benchmarks' BRTI: the median gap over the last \(engine.calibrationSampleCount) window opens")
                     }
+                    if let error = engine.trackingError {
+                        LabeledContent("Tracking error") {
+                            Text("±\(BotEngine.usd(error))")
+                        }
+                        .help("How far the index estimate was from Kalshi's official target, typically (median), over the last \(engine.trackingErrors.count) window opens. \(engine.sourceOffsets.isEmpty ? "Per-exchange offsets switch on once \(BotEngine.minimumMeasuredSources) exchanges have been measured at \(BotEngine.minimumOffsetSamples) opens." : "Per-exchange offsets are on for \(engine.sourceOffsets.count) exchanges.") Only windows that finish within about this much of their target are at risk of being misjudged.")
+                    }
                 }
                 .font(.callout)
                 .monospacedDigit()
@@ -220,9 +227,9 @@ struct SourceList: View {
         status.state == .used && usedCount > 0 ? 1 / Double(usedCount) : 0
     }
 
-    /// Weighted average of the used sources — the same quotes the list shows.
+    /// Weighted average of the used sources, each with its offset — the same quotes the list shows.
     private var composite: Double? {
-        let used = statuses.compactMap { $0.state == .used ? $0.mid : nil }
+        let used = statuses.compactMap { $0.state == .used ? $0.corrected : nil }
         return used.isEmpty ? nil : used.reduce(0, +) / Double(used.count)
     }
 
@@ -241,14 +248,16 @@ struct SourceList: View {
                             .foregroundStyle(status.state == .used ? .primary : .secondary)
                         Text(status.mid.map(BotEngine.usd) ?? "—")
                             .gridColumnAlignment(.trailing)
-                        Text(gap(status.mid))
+                        Text(gap(status.corrected))
                             .foregroundStyle(.secondary)
                             .gridColumnAlignment(.trailing)
-                        Text(BotEngine.percent(weight(status)))
-                            .foregroundStyle(status.state == .used ? .primary : .tertiary)
+                        // Out-of-use sources show how long they've been out instead of 0%.
+                        Text(isOut(status.state) ? duration(status) : BotEngine.percent(weight(status)))
+                            .foregroundStyle(status.state == .used ? AnyShapeStyle(.primary)
+                                             : isOut(status.state) ? AnyShapeStyle(color(status.state)) : AnyShapeStyle(.tertiary))
                             .gridColumnAlignment(.trailing)
                     }
-                    .help("\(status.source.title): \(label(status.state)). \(help(status.state))")
+                    .help(detail(status))
                     .accessibilityElement(children: .combine)
                 }
                 Divider().gridCellColumns(5)
@@ -271,12 +280,35 @@ struct SourceList: View {
                 .help("The composite plus the BRTI calibration offset — the price the bot uses for Kalshi's settlement index (CF Benchmarks BRTI).")
             }
             .monospacedDigit()
-            Text("✓ used · ↔ trimmed (highest/lowest) · ⚠︎ off-market · clock stale. Composite = average of \(usedCount) used.")
+            Text("✓ used · ↔ trimmed (highest/lowest) · ⚠︎ off-market · clock stale, with time out. Gaps include each exchange's BRTI offset. Composite = average of \(usedCount) used.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .font(.caption)
+    }
+
+    private func isOut(_ state: SourceStatus.State) -> Bool {
+        state == .stale || state == .outlier || state == .waiting
+    }
+
+    /// Time in the current state, e.g. "45s" or "3m".
+    private func duration(_ status: SourceStatus) -> String {
+        guard let since = status.since else { return "—" }
+        let seconds = max(Int(Date.now.timeIntervalSince(since)), 0)
+        return seconds < 60 ? "\(seconds)s" : seconds < 3600 ? "\(seconds / 60)m" : "\(seconds / 3600)h"
+    }
+
+    private func detail(_ status: SourceStatus) -> String {
+        var parts = ["\(status.source.title): \(label(status.state))" + (isOut(status.state) ? " for \(duration(status))." : "."),
+                     help(status.state)]
+        if status.offset != 0 {
+            parts.append("BRTI offset \(status.offset >= 0 ? "+" : "−")\(BotEngine.usd(abs(status.offset))), measured against Kalshi's official targets, is added before averaging.")
+        }
+        if status.reconnects > 0 {
+            parts.append("Stream reconnected \(status.reconnects) time\(status.reconnects == 1 ? "" : "s") since the bot started.")
+        }
+        return parts.joined(separator: " ")
     }
 
     private func gap(_ mid: Double?) -> String {
@@ -320,8 +352,8 @@ struct SourceList: View {
         case .used: "Averaged into the combined price."
         case .trimmed: "In line with the others but the highest or lowest right now, so left out of the average to keep any one book from dragging it."
         case .outlier: "More than 0.05% from the other books, so left out as off-market."
-        case .stale: "No fresh quote in the last 10 seconds, so left out until it updates."
-        case .waiting: "Not connected yet, or no quote received."
+        case .stale: "No fresh quote in the last 10 seconds, so left out until it updates. A stream that stays silent for 30 seconds is reconnected automatically."
+        case .waiting: "Not connected yet, or no quote received. Dropped streams reconnect automatically."
         }
     }
 }
@@ -612,6 +644,8 @@ private func baselinePhrase(_ model: PredictionModel) -> String {
 struct ModelPanel: View {
     @Environment(BotEngine.self) private var engine
     let stats: AccuracyStats
+    /// For the CSV copy offered before a full reset.
+    let records: [PredictionRecord]
     @State private var isConfirmingReset = false
     static let targetAccuracy = 0.70
 
@@ -688,9 +722,14 @@ struct ModelPanel: View {
             Button("Reset Model…", systemImage: "arrow.counterclockwise", role: .destructive) { isConfirmingReset = true }
                 .buttonStyle(.glass)
                 .confirmationDialog("Reset the model?", isPresented: $isConfirmingReset) {
-                    Button("Reset Model and Clear All Data", role: .destructive) { engine.resetModel() }
+                    Button("Reset Model, Keep Data") { engine.resetModelKeepingData() }
+                    Button("Copy Log, Then Clear All Data", role: .destructive) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(PredictionLogView.csv(for: records), forType: .string)
+                        engine.resetModel()
+                    }
                 } message: {
-                    Text("This returns the model to its starting weights and permanently deletes all data: the prediction log and accuracy history, the training history, the price calibration, call-time statistics, alerts and the activity log. Your settings are kept. The model then retrains from scratch on Kalshi's full market history (rebuilt from public data, about a minute).")
+                    Text("Reset Model, Keep Data returns the weights, promotions and trials to their starting point and retrains on the data already collected. The prediction log, accuracy and history are kept.\n\nClear All Data copies the prediction log to the clipboard as CSV, then permanently deletes the log and accuracy history, the training history, the price calibration and exchange offsets, call-time statistics, alerts and the activity log. Settings and the saved market download are kept, so the rebuild takes seconds.")
                 }
         }
         .font(.callout)

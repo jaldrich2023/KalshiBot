@@ -71,6 +71,18 @@ final class BotEngine {
     /// median of (official target − our raw 60s average) over recent window opens.
     private(set) var priceCalibration: Double = 0
     private(set) var calibrationSampleCount = 0
+    /// Per-exchange corrections toward the official BRTI (by exchange raw value): the
+    /// median of (official target − that exchange's 60s average) over recent window
+    /// opens. Empty until enough exchanges have been measured.
+    private(set) var sourceOffsets: [String: Double] = [:]
+    /// How far the index estimate was from Kalshi's official target at recent opens
+    /// (official − estimate), newest last.
+    private(set) var trackingErrors: [Double] = []
+
+    /// Median size of the recent tracking errors, once there are a few.
+    var trackingError: Double? {
+        trackingErrors.count >= 3 ? Self.median(trackingErrors.map(abs)) : nil
+    }
     /// Settled windows available to learn from, split by source.
     private(set) var liveExampleCount = 0
     private(set) var historyExampleCount = 0
@@ -106,12 +118,24 @@ final class BotEngine {
     private var trialStreaks: [String: Int] = [:]
     static let trialStreakToChange = 3
 
+    /// Keeps the Mac from idle-sleeping while the bot runs, so no window is missed.
+    var keepMacAwake: Bool {
+        didSet {
+            UserDefaults.standard.set(keepMacAwake, forKey: Keys.keepMacAwake)
+            if keepAwake != nil { endActivity() }
+            updateActivity()
+        }
+    }
+
     /// "Confident calls only": windows whose call is less confident than this are marked
     /// "No call" and left out of accuracy (they're still logged and trained on). 0 = off.
     var minimumCallConfidence: Double {
         didSet { UserDefaults.standard.set(minimumCallConfidence, forKey: Keys.minimumCallConfidence) }
     }
     static let callConfidenceOptions: [Double] = [0, 0.60, 0.65, 0.70, 0.75, 0.80]
+    /// New installs skip calls under 60%: in 6,400 past windows, 50–55% calls were right
+    /// half the time — a coin flip — so counting them only adds noise.
+    static let defaultCallConfidence = 0.60
 
     /// True if this window's call falls below the confidence threshold.
     func isNoCall(_ record: PredictionRecord) -> Bool {
@@ -196,6 +220,9 @@ final class BotEngine {
     /// A rebuild was asked for while one was running; run again when it finishes.
     private var catchUpRequested = false
     private var calibrationSamples: [Double] = []
+    private var sourceOffsetSamples: [String: [Double]] = [:]
+    /// Each exchange's own mid, per second, for the last few minutes.
+    private var sourceTicks: [String: [(time: Date, mid: Double)]] = [:]
 
     private enum Keys {
         // v2: market-anchored model; older saved weights don't apply.
@@ -209,6 +236,9 @@ final class BotEngine {
         static let stake = "stake"
         // v2: trimmed-mean composite (v1 was a plain median). v4: eight sources.
         static let calibration = "brtiCalibrationSamples.v4"
+        static let sourceOffsets = "sourceOffsetSamples.v1"
+        static let trackingErrors = "brtiTrackingErrors.v1"
+        static let keepMacAwake = "keepMacAwake"
         static let historyFeatureVersion = "historyFeatureVersion"
         static let historyCallDelay = "historyCallDelay"
         static let lastResetAt = "lastResetAt"
@@ -232,16 +262,25 @@ final class BotEngine {
     /// v2: features at open + call delay. v3: adds the Deribit futures features (since
     /// removed; their stored values are ignored, so no rebuild was needed).
     private static let historyFeatureVersion = 3
-    /// Recent window opens used for the BRTI calibration.
+    /// Recent window opens used for the BRTI calibration and per-exchange offsets.
     private static let calibrationSampleLimit = 48
+    /// Opens an exchange must be measured at before its own offset is used, and how many
+    /// exchanges must be measured before any offsets are applied.
+    nonisolated static let minimumOffsetSamples = 6
+    nonisolated static let minimumMeasuredSources = 3
 
     init() {
         let defaults = UserDefaults.standard
         let useKalshiOdds = defaults.object(forKey: Keys.useKalshiOdds) as? Bool ?? true
         self.useKalshiOdds = useKalshiOdds
         tradingStyle = defaults.string(forKey: Keys.tradingStyle).flatMap(TradingStyle.init(rawValue:)) ?? .neutral
-        let savedConfidence = defaults.double(forKey: Keys.minimumCallConfidence)
-        minimumCallConfidence = Self.callConfidenceOptions.contains(savedConfidence) ? savedConfidence : 0
+        if defaults.object(forKey: Keys.minimumCallConfidence) == nil {
+            minimumCallConfidence = Self.defaultCallConfidence
+        } else {
+            let savedConfidence = defaults.double(forKey: Keys.minimumCallConfidence)
+            minimumCallConfidence = Self.callConfidenceOptions.contains(savedConfidence) ? savedConfidence : 0
+        }
+        keepMacAwake = defaults.object(forKey: Keys.keepMacAwake) as? Bool ?? true
         let savedStop = defaults.double(forKey: Keys.customStopLoss)
         customStopLoss = Self.stopLossOptions.contains(savedStop) ? savedStop : 0
         let savedProfit = defaults.double(forKey: Keys.customTakeProfit)
@@ -263,6 +302,9 @@ final class BotEngine {
         }
         calibrationSamples = UserDefaults.standard.array(forKey: Keys.calibration) as? [Double] ?? []
         updateCalibration()
+        sourceOffsetSamples = defaults.dictionary(forKey: Keys.sourceOffsets) as? [String: [Double]] ?? [:]
+        updateSourceOffsets()
+        trackingErrors = defaults.array(forKey: Keys.trackingErrors) as? [Double] ?? []
     }
 
     // MARK: Lifecycle
@@ -271,13 +313,15 @@ final class BotEngine {
         guard !isRunning else { return }
         modelContext = context
         isRunning = true
-        keepAwake = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiated, .idleSystemSleepDisabled],
-            reason: "Collecting prices and calling each 15-minute Kalshi window")
+        updateActivity()
         log("Bot started")
         discardOutdatedHistory(in: context)
 
-        Task { await liveFeed.start() }
+        let offsets = sourceOffsets
+        Task {
+            await liveFeed.setOffsets(offsets)
+            await liveFeed.start()
+        }
         tasks = [
             // One price sample per wall-clock second, like the BRTI itself.
             onEverySecond { $0.sampleSpot() },
@@ -293,10 +337,38 @@ final class BotEngine {
         tasks.forEach { $0.cancel() }
         tasks = []
         Task { await liveFeed.stop() }
+        isRunning = false
+        endActivity()
+        log("Bot stopped")
+    }
+
+    /// While running, holds off App Nap so prices are sampled every second, and — if
+    /// `keepMacAwake` — idle sleep too.
+    private func updateActivity() {
+        guard isRunning, keepAwake == nil else { return }
+        keepAwake = ProcessInfo.processInfo.beginActivity(
+            options: keepMacAwake ? [.userInitiated, .idleSystemSleepDisabled] : [.userInitiatedAllowingIdleSystemSleep],
+            reason: "Collecting prices and calling each 15-minute Kalshi window")
+    }
+
+    private func endActivity() {
         if let keepAwake { ProcessInfo.processInfo.endActivity(keepAwake) }
         keepAwake = nil
-        isRunning = false
-        log("Bot stopped")
+    }
+
+    /// Model-only reset: starting weights, and promotions and trials cleared, then a
+    /// retrain on the data already collected. The prediction log, accuracy, training
+    /// history, calibration and activity are kept.
+    func resetModelKeepingData() {
+        let defaults = UserDefaults.standard
+        for key in [Keys.model, Keys.promoted, Keys.trialStreaks] { defaults.removeObject(forKey: key) }
+        defaults.set(Date.now, forKey: Keys.lastResetAt)
+        promoted = []
+        trialStreaks = [:]
+        model = .starting(excluding: excludedFeatures)
+        recomputeLive()
+        log("Model reset: starting weights, promotions and trials cleared; retraining on the data already collected")
+        Task { await retrain() }
     }
 
     /// Full reset: starting weights, and every log cleared — training history, the
@@ -314,7 +386,8 @@ final class BotEngine {
         // user's settings, which are written back.
         let defaults = UserDefaults.standard
         let kept: [String: Any] = [Keys.callDelayMinutes, Keys.useKalshiOdds, Keys.dashboardRequiredHeight, Keys.tradingStyle,
-                                   Keys.minimumCallConfidence, Keys.customStopLoss, Keys.customTakeProfit, Keys.stake]
+                                   Keys.minimumCallConfidence, Keys.customStopLoss, Keys.customTakeProfit, Keys.stake,
+                                   Keys.keepMacAwake]
             .reduce(into: [:]) { kept, key in kept[key] = defaults.object(forKey: key) }
         if let domain = Bundle.main.bundleIdentifier { defaults.removePersistentDomain(forName: domain) }
         for (key, value) in kept { defaults.set(value, forKey: key) }
@@ -327,6 +400,11 @@ final class BotEngine {
         activeSignalIDs = []
         calibrationSamples = []
         updateCalibration()
+        sourceOffsetSamples = [:]
+        updateSourceOffsets()
+        trackingErrors = []
+        let offsets = sourceOffsets
+        Task { await liveFeed.setOffsets(offsets) }
         callTimeAccuracy = [:]
         promoted = []
         trialStreaks = [:]
@@ -371,6 +449,7 @@ final class BotEngine {
         advanceWindowIfNeeded(at: now)
         Task {
             sourceStatuses = await liveFeed.statuses(at: now)
+            recordSourceTicks(sourceStatuses, at: now)
             if let live = await liveFeed.composite(at: now) {
                 isStreaming = true
                 record(price: live.price, sources: live.sources, at: now)
@@ -379,9 +458,23 @@ final class BotEngine {
                 isFallbackPolling = true
                 defer { isFallbackPolling = false }
                 if let polled = await composite.compositeMid() {
-                    record(price: polled.price, sources: polled.sources, at: now)
+                    // The REST fallback has no per-exchange detail; use the typical offset.
+                    let offset = sourceOffsets.isEmpty ? 0 : Self.median(Array(sourceOffsets.values))
+                    record(price: polled.price + offset, sources: polled.sources, at: now)
                 }
             }
+        }
+    }
+
+    /// Keeps each exchange's own mid per second while its quote is fresh, for measuring
+    /// its offset at the next window open.
+    private func recordSourceTicks(_ statuses: [SourceStatus], at time: Date) {
+        for status in statuses {
+            let id = status.source.rawValue
+            if let mid = status.mid, [.used, .trimmed, .outlier].contains(status.state) {
+                sourceTicks[id, default: []].append((time, mid))
+            }
+            sourceTicks[id]?.removeAll { time.timeIntervalSince($0.time) > 3 * 60 }
         }
     }
 
@@ -705,6 +798,26 @@ final class BotEngine {
         guard window.count >= 40, let first = window.first, market.openTime.timeIntervalSince(first.time) >= 55 else { return }
         lastCalibratedTicker = market.ticker
 
+        // What the index estimate was off by at this open, before learning from it.
+        let estimate = window.map(\.price).reduce(0, +) / Double(window.count)
+        if abs(strike - estimate) < 100 {
+            trackingErrors.append(strike - estimate)
+            if trackingErrors.count > 96 { trackingErrors.removeFirst(trackingErrors.count - 96) }
+            UserDefaults.standard.set(trackingErrors, forKey: Keys.trackingErrors)
+        }
+
+        // Per-exchange offsets first: if they've just switched on, the composite's level
+        // changes, so the old calibration (and this open's sample) no longer apply.
+        let wereActive = !sourceOffsets.isEmpty
+        recordSourceOffsets(strike: strike, open: market.openTime)
+        if !wereActive && !sourceOffsets.isEmpty {
+            calibrationSamples = []
+            UserDefaults.standard.set(calibrationSamples, forKey: Keys.calibration)
+            updateCalibration()
+            log("Per-exchange BRTI offsets now active (\(sourceOffsets.count) exchanges); calibration restarted on the corrected composite")
+            return
+        }
+
         let rawAverage = window.map(\.rawPrice).reduce(0, +) / Double(window.count)
         let sample = strike - rawAverage
         guard abs(sample) < 100 else { return }   // a data glitch, not drift
@@ -715,6 +828,49 @@ final class BotEngine {
         UserDefaults.standard.set(calibrationSamples, forKey: Keys.calibration)
         updateCalibration()
         log("BRTI calibration: composite was \(Self.usd(-sample)) vs. official; offset now \(Self.usd(priceCalibration))")
+    }
+
+    /// Each exchange's gap to the official target at this open: official − its own 60s
+    /// average, from the same seconds Kalshi averages.
+    private func recordSourceOffsets(strike: Double, open: Date) {
+        for (id, ticks) in sourceTicks {
+            let window = ticks.filter { $0.time < open && open.timeIntervalSince($0.time) <= 60 }
+            guard window.count >= 40, let first = window.first, open.timeIntervalSince(first.time) >= 55 else { continue }
+            let sample = strike - window.map(\.mid).reduce(0, +) / Double(window.count)
+            guard abs(sample) < 150 else { continue }   // a frozen or broken quote
+            sourceOffsetSamples[id, default: []].append(sample)
+            if let count = sourceOffsetSamples[id]?.count, count > Self.calibrationSampleLimit {
+                sourceOffsetSamples[id]?.removeFirst(count - Self.calibrationSampleLimit)
+            }
+        }
+        UserDefaults.standard.set(sourceOffsetSamples, forKey: Keys.sourceOffsets)
+        updateSourceOffsets()
+        let offsets = sourceOffsets
+        Task { await liveFeed.setOffsets(offsets) }
+    }
+
+    private func updateSourceOffsets() {
+        sourceOffsets = Self.offsets(from: sourceOffsetSamples)
+    }
+
+    /// Median offset per exchange with enough samples; exchanges not yet measured get the
+    /// median of the measured ones. Empty until `minimumMeasuredSources` are measured, so
+    /// a single exchange's quirks never set the level.
+    nonisolated static func offsets(from samples: [String: [Double]]) -> [String: Double] {
+        let measured = samples.filter { $0.value.count >= minimumOffsetSamples }
+            .mapValues { min(max(median($0), -100), 100) }
+        guard measured.count >= minimumMeasuredSources else { return [:] }
+        let typical = median(Array(measured.values))
+        return Dictionary(uniqueKeysWithValues: CompositePriceClient.Exchange.allCases.map { exchange in
+            (exchange.rawValue, measured[exchange.rawValue] ?? typical)
+        })
+    }
+
+    nonisolated static func median(_ values: [Double]) -> Double {
+        guard !values.isEmpty else { return 0 }
+        let sorted = values.sorted()
+        let mid = sorted.count / 2
+        return sorted.count.isMultiple(of: 2) ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
     }
 
     /// Median is robust to the occasional odd window; capped so a bad run can't run away.
@@ -771,30 +927,58 @@ final class BotEngine {
             let incomplete = Dictionary(existing.filter { !complete.contains($0.ticker) }.map { ($0.ticker, $0) },
                                         uniquingKeysWith: { first, _ in first })
 
-            backfillStatus = "Fetching settled windows…"
             // Public market history, rebuilt in full even after a reset: a reset clears the
-            // bot's own logs and learning, not what the market did.
+            // bot's own logs and learning, not what the market did. Downloads are cached on
+            // disk, so only windows and candles newer than the cache are fetched.
+            backfillStatus = "Fetching settled windows…"
             let since = Date.now.addingTimeInterval(-Self.historyWindow)
-            let markets = try await kalshi.settledMarkets(closedAfter: since)
-                .filter { !complete.contains($0.ticker) && $0.settledUp != nil && ($0.floorStrike ?? 0) > 0 && $0.openTime >= since }
-            guard let earliest = markets.map(\.openTime).min(), let latest = markets.map(\.openTime).max() else {
+            var cache = await Task.detached { HistoryCache.load() }.value
+            let newestCached = cache.markets.values.map(\.closeTime).max()
+            // An hour of overlap catches windows that settled late.
+            let fetchFrom = max(since, newestCached?.addingTimeInterval(-3600) ?? since)
+            cache.merge(markets: try await kalshi.settledMarkets(closedAfter: fetchFrom))
+            cache.prune(before: since)
+            let all = cache.markets.values
+                .filter { $0.settledUp != nil && ($0.floorStrike ?? 0) > 0 && $0.openTime >= since }
+                .sorted { $0.openTime < $1.openTime }
+
+            // Odds at every call-time option, so each option's accuracy can be shown.
+            let unchecked = all.filter { !cache.oddsChecked.contains($0.ticker) }
+            if !unchecked.isEmpty {
+                backfillStatus = "Fetching Kalshi odds for \(unchecked.count) windows…"
+                let offsets = Self.callTimeOptions.map { TimeInterval($0 * 60) }
+                let (fresh, checked, failedBatches, oddsError) = await kalshi.yesMids(unchecked, at: offsets)
+                cache.merge(mids: fresh, checked: checked)
+                if failedBatches > 0 {
+                    log("Kalshi odds: \(failedBatches) batch(es) failed (\(oddsError?.localizedDescription ?? "unknown error")); those windows retry on the next catch-up")
+                }
+            }
+            updateCallTimeAccuracy(markets: all, cache: cache)
+
+            let markets = all.filter { !complete.contains($0.ticker) }
+            guard let earliest = markets.first?.openTime, let latest = markets.last?.openTime else {
+                let saved = cache
+                await Task.detached { saved.save() }.value
                 await retrain()
                 return
             }
 
-            log("Rebuilding \(markets.count) past windows for training…")
-            backfillStatus = "Fetching \(markets.count) windows of price history…"
-            let history = try await coinbase.oneMinuteCandles(from: earliest.addingTimeInterval(-160 * 60),
-                                                              to: latest.addingTimeInterval(delay))
-
-            // Odds at every call-time option, so each option's accuracy can be shown.
-            backfillStatus = "Fetching Kalshi odds for \(markets.count) windows…"
-            let offsets = Self.callTimeOptions.map { TimeInterval($0 * 60) }
-            let (mids, failedBatches, oddsError) = await kalshi.yesMids(markets, at: offsets)
-            if failedBatches > 0 {
-                log("Kalshi odds: \(failedBatches) batch(es) failed (\(oddsError?.localizedDescription ?? "unknown error")); those windows retry on the next catch-up")
+            // Candles from 160 min before the earliest window to the latest call time.
+            let needed = cache.missingCandleRanges(from: earliest.addingTimeInterval(-160 * 60),
+                                                   to: latest.addingTimeInterval(delay))
+            if !needed.isEmpty {
+                log("Rebuilding \(markets.count) past windows for training…")
+                backfillStatus = "Fetching price history for \(markets.count) windows…"
+                for range in needed {
+                    cache.merge(candles: try await coinbase.oneMinuteCandles(from: range.start, to: range.end))
+                }
+            } else {
+                log("Rebuilding \(markets.count) past windows for training (from saved history)…")
             }
-            updateCallTimeAccuracy(markets: markets, mids: mids)
+            let saved = cache
+            await Task.detached { saved.save() }.value
+            let history = cache.candles
+            let mids: [TimeInterval: [String: Double]] = [delay: cache.mids(at: delay)]
 
             // A reset or call-time change happened mid-rebuild: its own rebuild runs instead.
             guard generation == historyGeneration, delay == callDelay else {
@@ -803,7 +987,7 @@ final class BotEngine {
             }
 
             let callMids = mids[delay] ?? [:]
-            var added = 0
+            var added = 0, withOdds = 0
             for market in markets {
                 guard let wentUp = market.settledUp, let strike = market.floorStrike,
                       var features = FeatureExtractor.historicalFeatures(
@@ -812,6 +996,7 @@ final class BotEngine {
                 else { continue }
                 if let mid = callMids[market.ticker] {
                     features[.kalshiImplied] = FeatureExtractor.kalshiFeature(yesMid: mid)
+                    withOdds += 1
                 }
                 if let old = incomplete[market.ticker] { context.delete(old) }
                 context.insert(TrainingExample(ticker: market.ticker, openTime: market.openTime, wentUp: wentUp,
@@ -819,19 +1004,19 @@ final class BotEngine {
                 added += 1
             }
             try? context.save()
-            log("Added \(added) past windows at +\(callDelayMinutes) min (\(callMids.count) with Kalshi odds)")
+            log("Added \(added) past windows at +\(callDelayMinutes) min (\(withOdds) with Kalshi odds)")
         } catch {
             log("History: \(error.localizedDescription)")
         }
         await retrain()
     }
 
-    /// Kalshi-favorite accuracy at each call time, from a rebuild covering most of the
-    /// history (a small catch-up of a few windows would be too noisy to replace it).
-    private func updateCallTimeAccuracy(markets: [KalshiMarket], mids: [TimeInterval: [String: Double]]) {
+    /// Kalshi-favorite accuracy at each call time, over every cached window with odds.
+    private func updateCallTimeAccuracy(markets: [KalshiMarket], cache: HistoryCache) {
         guard markets.count >= 500 else { return }
         for minutes in Self.callTimeOptions {
-            guard let atOffset = mids[TimeInterval(minutes * 60)], atOffset.count >= 500 else { continue }
+            let atOffset = cache.mids(at: TimeInterval(minutes * 60))
+            guard atOffset.count >= 500 else { continue }
             let outcomes = markets.compactMap { market -> Bool? in
                 guard let mid = atOffset[market.ticker], let up = market.settledUp else { return nil }
                 return (mid >= 0.5) == up

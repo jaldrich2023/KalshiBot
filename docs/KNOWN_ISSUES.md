@@ -1,18 +1,18 @@
 # Known issues and limitations
 
-These are known, documented limitations of Kalshi Bot 2.14. They aren't treated as bugs.
+These are known, documented limitations of Kalshi Bot 2.15. They aren't treated as bugs.
 
 ## Predictions
 
 - **The bot doesn't beat Kalshi's price.** Every signal tested so far adds nothing on held-out windows beyond Kalshi's price at the call, so the bot usually follows Kalshi's odds and its accuracy matches the market's. See the User Manual, chapter 5.
-- **Low-confidence calls lose often.** Calls at 55–60% are right about 58% of the time. That's correct calibration, not a fault. Use **Calls › Only ≥60% confident** to skip them.
-- **"Use Kalshi odds" off is much less accurate.** With it off, the model uses price signals alone.
+- **Low-confidence calls lose often.** Calls at 55–60% are right about 58% of the time. That's correct calibration, not a fault. New installs skip calls under 60% (**Calls › Only ≥60% confident**).
+- **"Use Kalshi odds" off is much less accurate.** With it off, the model uses price signals alone; the Strategy card shows a warning.
 
 ## Prices and data
 
-- **The BRTI estimate isn't the official index.** It's built from eight public exchange feeds and corrected by a calibration learned from Kalshi's targets. It can differ from CF Benchmarks' official value by a few dollars, which matters only when a window finishes very close to its target.
-- **Sources drop out.** Feeds can go stale or move off-market for a while; the composite drops them automatically and uses the rest.
-- **History depends on public APIs.** Rebuilding training history needs Kalshi's and Coinbase's public endpoints. If they're slow or limit requests, the rebuild takes longer.
+- **The BRTI estimate isn't the official index.** It's built from ten public exchange feeds, each corrected by its own measured offset from Kalshi's official targets, plus an overall calibration. It still differs from CF Benchmarks' value by a few dollars; the Current Window card shows the typical **Tracking error**. That matters only when a window finishes within about that much of its target.
+- **Sources drop out.** Feeds can go stale or move off-market for a while. The composite drops them and uses the rest; dropped or silent streams reconnect automatically, and the source list shows how long each has been out.
+- **History depends on public APIs.** The first rebuild downloads up to 180 days from Kalshi and Coinbase, retrying slow or failed requests. After that, the download is saved and only new windows are fetched. macOS can clear the saved copy (it's in Caches) to free space, which just means one full download again.
 - **Rebuilt windows lack some data.** Windows rebuilt from history have no tick momentum, and no Kalshi odds where Kalshi has no price history.
 
 ## Trading
@@ -23,5 +23,5 @@ These are known, documented limitations of Kalshi Bot 2.14. They aren't treated 
 
 ## App
 
-- **The Mac stays awake while the bot runs.** Click **Stop** to let it sleep.
-- **Reset deletes everything except settings,** and can't be undone. Copy the CSV first if you want a record.
+- **Sleeping misses windows.** With **Keep Mac awake** off, the Mac can sleep while the bot runs, and windows during sleep are missed (they're still learned from history later).
+- **Clear All Data can't be undone.** It copies the log to the clipboard as CSV first; paste it somewhere to keep it. **Reset Model, Keep Data** resets only the model.

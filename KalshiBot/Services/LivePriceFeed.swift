@@ -2,7 +2,7 @@
 //  LivePriceFeed.swift
 //  KalshiBot
 //
-//  Real-time top-of-book from eight US-reachable BTC/USD books: Coinbase, Kraken and
+//  Real-time top-of-book from ten US-reachable BTC/USD(C) books: Coinbase, Kraken and
 //  Bitstamp stream over WebSockets; the rest are polled every second or two. The
 //  composite tracks the market to the second instead of lagging minute-old data.
 //
@@ -24,9 +24,19 @@ nonisolated struct SourceStatus: Sendable, Identifiable, Equatable {
         case waiting
     }
     let source: CompositePriceClient.Exchange
+    /// The exchange's own mid, before its offset.
     let mid: Double?
     let state: State
+    /// Dollars added to this exchange's mid so it tracks the official BRTI (0 until measured).
+    var offset: Double = 0
+    /// When the source entered its current state.
+    var since: Date?
+    /// Times its stream was reconnected since the bot started (streamed sources only).
+    var reconnects = 0
     var id: String { source.rawValue }
+
+    /// The mid as it enters the composite.
+    var corrected: Double? { mid.map { $0 + offset } }
 }
 
 /// Latest best bid/ask mid per exchange, pushed by each exchange as it changes.
@@ -70,6 +80,16 @@ actor LivePriceFeed {
 
     /// Every source, streamed or polled, by `CompositePriceClient.Exchange` raw value.
     private var quotes: [String: Quote] = [:]
+    /// Per-exchange corrections toward the official BRTI, set by the engine.
+    private var offsets: [String: Double] = [:]
+    /// Each source's current state and when it began, for "stale for 2 min".
+    private var stateSince: [String: (state: SourceStatus.State, since: Date)] = [:]
+    private var reconnects: [String: Int] = [:]
+    /// Last message of any kind on each stream, so a silent socket can be replaced.
+    private var lastMessage: [String: Date] = [:]
+    /// A stream with no message for this long is assumed dead and reconnected. Each
+    /// streamed book updates several times a second in normal trading.
+    static let silentLimit: TimeInterval = 30
     /// Messages that changed each exchange's quote, for diagnosing a quiet feed.
     private(set) var updateCounts: [String: Int] = [:]
     private(set) var messageCounts: [String: Int] = [:]
@@ -115,6 +135,13 @@ actor LivePriceFeed {
         tasks.values.forEach { $0.cancel() }
         tasks = [:]
         quotes = [:]
+        stateSince = [:]
+    }
+
+    /// Per-exchange corrections (by `CompositePriceClient.Exchange` raw value) applied
+    /// before the quotes are combined.
+    func setOffsets(_ offsets: [String: Double]) {
+        self.offsets = offsets
     }
 
     /// Exchanges currently contributing a fresh quote.
@@ -143,18 +170,22 @@ actor LivePriceFeed {
     func statuses(at date: Date = .now) -> [SourceStatus] {
         let states = Self.combine(freshMids(at: date)).states
         return CompositePriceClient.Exchange.allCases.map { source in
-            let quote = quotes[source.rawValue]
+            let id = source.rawValue
+            let quote = quotes[id]
             let mid = quote.flatMap { q in q.bid.flatMap { b in q.ask.map { (b + $0) / 2 } } }
-            let state: SourceStatus.State = states[source.rawValue] ?? (mid == nil ? .waiting : .stale)
-            return SourceStatus(source: source, mid: mid, state: state)
+            let state: SourceStatus.State = states[id] ?? (mid == nil ? .waiting : .stale)
+            if stateSince[id]?.state != state { stateSince[id] = (state, date) }
+            return SourceStatus(source: source, mid: mid, state: state, offset: offsets[id] ?? 0,
+                                since: stateSince[id]?.since, reconnects: reconnects[id] ?? 0)
         }
     }
 
+    /// Fresh mids with each exchange's offset applied.
     private func freshMids(at date: Date) -> [(id: String, mid: Double)] {
         quotes.compactMap { id, quote in
             guard date.timeIntervalSince(quote.updated) <= Self.maxQuoteAge,
                   let bid = quote.bid, let ask = quote.ask, bid > 0, ask >= bid else { return nil }
-            return (id, (bid + ask) / 2)
+            return (id, (bid + ask) / 2 + (offsets[id] ?? 0))
         }
     }
 
@@ -188,11 +219,28 @@ actor LivePriceFeed {
     // MARK: Connection
 
     /// Keeps one exchange connected, reconnecting with backoff (1s, 2s, 4s… up to 30s).
+    /// A watchdog also replaces a socket that stays open but goes silent, which would
+    /// otherwise leave the source stale indefinitely.
     private func run(_ exchange: Exchange) async {
         var backoff: Double = 1
+        var connections = 0
         while !Task.isCancelled {
             let socket = session.webSocketTask(with: exchange.url)
             socket.resume()
+            connections += 1
+            if connections > 1 { reconnects[exchange.rawValue, default: 0] += 1 }
+            lastMessage[exchange.rawValue] = .now
+            let watchdog = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(5))
+                    guard let self, !Task.isCancelled else { return }
+                    if await self.isSilent(exchange) {
+                        // Ends the pending receive with an error, so the loop reconnects.
+                        socket.cancel(with: .goingAway, reason: nil)
+                        return
+                    }
+                }
+            }
             do {
                 if let subscription = exchange.subscription {
                     try await socket.send(.string(subscription))
@@ -208,8 +256,9 @@ actor LivePriceFeed {
                     if let text { handle(text, from: exchange) }
                 }
             } catch {
-                // Dropped or refused; fall through to reconnect.
+                // Dropped, refused or silenced by the watchdog; fall through to reconnect.
             }
+            watchdog.cancel()
             socket.cancel(with: .goingAway, reason: nil)
             quotes[exchange.rawValue] = nil
             try? await Task.sleep(for: .seconds(backoff))
@@ -217,8 +266,13 @@ actor LivePriceFeed {
         }
     }
 
+    private func isSilent(_ exchange: Exchange, at date: Date = .now) -> Bool {
+        lastMessage[exchange.rawValue].map { date.timeIntervalSince($0) > Self.silentLimit } ?? false
+    }
+
     private func handle(_ text: String, from exchange: Exchange) {
         messageCounts[exchange.rawValue, default: 0] += 1
+        lastMessage[exchange.rawValue] = .now
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         let now = Date.now

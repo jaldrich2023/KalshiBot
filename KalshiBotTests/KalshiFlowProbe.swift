@@ -43,7 +43,7 @@ struct KalshiFlowProbe {
         let kalshi = KalshiClient()
         let markets = try await kalshi.settledMarkets(closedAfter: since)
             .filter { $0.settledUp != nil && $0.openTime >= since }.sorted { $0.openTime < $1.openTime }
-        let (mids, _, _) = await kalshi.yesMids(markets, at: [120, 180])
+        let (mids, _, _, _) = await kalshi.yesMids(markets, at: [120, 180])
         say("markets \(markets.count), mids@3 \(mids[180]?.count ?? 0), mids@2 \(mids[120]?.count ?? 0)")
 
         struct Row { let pK: Double; let y: Bool; var x: [String: Double] }

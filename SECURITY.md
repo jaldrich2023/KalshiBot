@@ -28,9 +28,9 @@ Kalshi Bot is a sandboxed macOS app. It makes **outgoing** connections only, to 
 
 In scope:
 
-- **Parsing untrusted network data.** This covers Kalshi's market and history responses, Coinbase candles, and the exchange tickers and WebSocket messages (Coinbase, Kraken, Bitstamp, Gemini, Crypto.com, Binance.US and Deribit). Malformed or hostile responses should never crash the app or corrupt its stored data.
+- **Parsing untrusted network data.** This covers Kalshi's market and history responses, Coinbase candles, and the exchange tickers and WebSocket messages (Coinbase, Kraken, Bitstamp, Gemini, Crypto.com, Binance.US, Deribit, OKX and KuCoin). Malformed or hostile responses should never crash the app or corrupt its stored data.
 - **The composite price.** The off-market filter and the outlier trimming in `Services/LivePriceFeed.swift` should stop a single bad or manipulated feed from moving the price far.
-- **Local data.** This covers the SwiftData store (the prediction log and training history) and the settings in the app's sandbox container.
+- **Local data.** This covers the SwiftData store (the prediction log and training history), the saved market download (`MarketHistory.v1.json` in the app's Caches folder) and the settings in the app's sandbox container.
 
 Out of scope:
 
