@@ -113,7 +113,7 @@ nonisolated struct AppVersion: Sendable {
         return AppVersion(
             marketing: info["CFBundleShortVersionString"] as? String ?? "0.0.0",
             build: info["CFBundleVersion"] as? String ?? "0",
-            copyright: info["NSHumanReadableCopyright"] as? String ?? "© 2026 I'm The Team, LLC. All rights reserved."
+            copyright: info["NSHumanReadableCopyright"] as? String ?? "© 2026 John Aldrich. MIT License."
         )
     }
 }

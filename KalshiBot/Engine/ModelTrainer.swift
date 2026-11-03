@@ -65,6 +65,15 @@ nonisolated struct ModelEvaluation: Codable, Sendable, Equatable {
     /// weights — the "overall" test for switching (nil before 2.21).
     var logLoss: Double?
     var priorLogLoss: Double?
+    /// Per-window log-loss improvement of the learned weights over the starting weights
+    /// across the scored windows, and its 95% margin of error (nil before 2.22).
+    var gain: Double?
+    var gainMargin: Double?
+
+    /// The improvement is bigger than chance.
+    var isSignificantGain: Bool { (gain ?? 0) > (gainMargin ?? .infinity) }
+    /// The learned weights do significantly worse than the starting weights.
+    var isSignificantLoss: Bool { (gain ?? 0) < -(gainMargin ?? .infinity) }
 }
 
 nonisolated enum ModelTrainer {
@@ -97,9 +106,12 @@ nonisolated enum ModelTrainer {
     ///
     /// A market-anchored model only learns from windows where Kalshi's odds are known;
     /// a window without them would look like "the market said 50/50" and skew the fit.
+    /// - Parameter usingLearned: whether the model in use already predicts with learned
+    ///   weights under this rule. Switching on takes a significant gain; once on, it stays
+    ///   on unless the learned weights fall clearly behind (see `decide`).
     static func train(_ samples: [TrainingSample], excluding excluded: Set<FeatureKey>,
                       promoted: Set<FeatureKey> = [], lastTrialMarks: [String: Int] = [:],
-                      now: Date = .now) -> PredictionModel {
+                      usingLearned: Bool = false, now: Date = .now) -> PredictionModel {
         let starting = PredictionModel.starting(excluding: excluded, promoted: promoted)
         let usable = starting.marketAnchored ? samples.filter { $0.features[.kalshiImplied] != nil } : samples
         let sorted = usable.sorted { $0.time < $1.time }
@@ -119,6 +131,7 @@ nonisolated enum ModelTrainer {
 
         var won = 0
         var learnedScores: [TrainingSample] = []
+        var diffs: [Double] = []
         var fittedLoss = 0.0, priorLoss = 0.0, fittedBrier = 0.0, priorBrier = 0.0, fittedRight = 0, priorRight = 0
         for fold in 0..<folds {
             let lower = firstTest + (sorted.count - firstTest) * fold / folds
@@ -130,6 +143,7 @@ nonisolated enum ModelTrainer {
             let trained = fit(before, excluding: excluded, promoted: promoted, now: before.last?.time ?? now, regularization: lambda)
             let fitted = score(trained, on: block, excluding: excluded)
             let prior = score(starting, on: block, excluding: excluded)
+            diffs += block.map { logLoss(starting, $0, excluding: excluded) - logLoss(trained, $0, excluding: excluded) }
             if fitted.logLoss < prior.logLoss { won += 1 }
             let n = Double(block.count)
             fittedLoss += fitted.logLoss * n; priorLoss += prior.logLoss * n
@@ -138,8 +152,11 @@ nonisolated enum ModelTrainer {
             learnedScores += block
         }
         let scored = Double(max(learnedScores.count, 1))
-        // Most blocks, and overall: one lucky block can't switch the model over.
-        let learnedHelps = won >= max(folds - 1, 1) && fittedLoss < priorLoss
+        let n = Double(diffs.count)
+        let meanGain = n > 0 ? diffs.reduce(0, +) / n : 0
+        let gainVariance = n > 1 ? diffs.reduce(0) { $0 + ($1 - meanGain) * ($1 - meanGain) } / (n - 1) : 0
+        let gainMargin = n > 1 ? 1.96 * (gainVariance / n).squareRoot() : .infinity
+        let learnedHelps = decide(usingLearned: usingLearned, won: won, folds: folds, gain: meanGain, margin: gainMargin)
 
         // Recency is measured from the newest window, not the wall clock, so history
         // doesn't fade away just because the app wasn't running for a while.
@@ -154,7 +171,8 @@ nonisolated enum ModelTrainer {
             accuracy: Double(fittedRight) / scored, brierScore: fittedBrier / scored,
             priorAccuracy: Double(priorRight) / scored, priorBrierScore: priorBrier / scored,
             regularization: lambda, folds: folds, foldsWon: won,
-            logLoss: fittedLoss / scored, priorLogLoss: priorLoss / scored
+            logLoss: fittedLoss / scored, priorLogLoss: priorLoss / scored,
+            gain: meanGain, gainMargin: gainMargin
         )
         let candidates = FeatureKey.promotionCandidates.filter { !excluded.contains($0) }
         for key in candidates {
@@ -162,6 +180,19 @@ nonisolated enum ModelTrainer {
                                                lastMark: lastTrialMarks[key.rawValue], testedSignals: candidates.count)
         }
         return model
+    }
+
+    /// Switching on needs most blocks *and* an overall gain bigger than its margin of
+    /// error, so chance can't switch the model over. Once on, the learned weights stay
+    /// unless they fall clearly behind — winning fewer than half the blocks, or doing
+    /// significantly worse overall — so a small dip doesn't flip the model back and forth.
+    static func decide(usingLearned: Bool, won: Int, folds: Int, gain: Double, margin: Double) -> Bool {
+        if usingLearned {
+            let losingBlocks = Double(won) < Double(folds) / 2
+            let significantlyWorse = gain < -margin
+            return !(losingBlocks || significantlyWorse)
+        }
+        return won >= max(folds - 1, 1) && gain > margin
     }
 
     /// Fraction of windows a trial signal must be present in to be judged fairly.

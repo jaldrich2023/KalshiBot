@@ -8,6 +8,7 @@ Each [GitHub Release](https://github.com/jaldrich2023/KalshiBot/releases) includ
 
 - A Mac with **Apple silicon** (M1 or later). The download doesn't run on Intel Macs.
 - **macOS 27.2** or later.
+- A large display is best: the window is a fixed 2,400 × 1,600 points. On a smaller screen it shrinks to fit and the dashboard scrolls inside it.
 - An internet connection. The app reads public market data only; it needs no account or API keys, and it never places orders.
 
 ## 1. Download and check it
@@ -16,7 +17,7 @@ Each [GitHub Release](https://github.com/jaldrich2023/KalshiBot/releases) includ
 2. Optional but recommended: check that the file is intact. Open **Terminal** and run:
 
    ```
-   shasum -a 256 ~/Downloads/KalshiBot-2.21.0-macOS.zip
+   shasum -a 256 ~/Downloads/KalshiBot-2.23.0-macOS.zip
    ```
 
    The result should match the checksum in the release notes, which is also attached as `KalshiBot-<version>-macOS.zip.sha256`.
@@ -79,4 +80,4 @@ Quit KalshiBot, replace the copy in Applications with the new version, and repea
 
 **It doesn't open on an Intel Mac.** The download is built for Apple silicon only. Intel Macs can [build it from source](../README.md#building).
 
-> **Not financial advice.** Kalshi Bot gives statistical estimates for information and education only. See [LICENSE](../LICENSE), section 4.
+> **Not financial advice.** Kalshi Bot gives statistical estimates for information and education only. See the [disclaimer](../DISCLAIMER.md). Kalshi Bot is open source under the [MIT License](../LICENSE).

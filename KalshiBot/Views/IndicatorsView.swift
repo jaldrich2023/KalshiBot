@@ -125,11 +125,11 @@ private struct LearnedWeightsConditions: View {
         let needed = max(folds - 1, 1)
         let enough = model.trainingCount >= ModelTrainer.minimumForEvaluation
         let mostBlocks = e != nil && won >= needed
-        let overall = e.flatMap { ev in ev.logLoss.flatMap { l in ev.priorLogLoss.map { l < $0 } } } ?? false
+        let overall = e?.isSignificantGain ?? false
 
         Panel(title: "Switching to learned weights", systemImage: "checklist") {
             Text(model.usesLearnedWeights
-                 ? "The model is predicting with learned weights: all three conditions are met."
+                 ? "The model is predicting with learned weights. They stay on unless they fall clearly behind \(baseline) — winning fewer than half the blocks, or doing significantly worse overall — so a small dip doesn't flip the model back and forth."
                  : "The model predicts with \(baseline) until learned weights meet all three conditions. They're re-checked after every settled window, so there's no fixed number of windows to wait for — only the evidence.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -140,7 +140,7 @@ private struct LearnedWeightsConditions: View {
                 condition(met: mostBlocks, "Win most walk-forward blocks",
                           e == nil ? "Not scored yet."
                                    : "Won \(won) of \(folds); needs \(needed). The newest \(Int(ModelTrainer.walkForwardShare * 100))% of windows (\(e!.holdoutCount.formatted())) is split into \(folds) blocks, each predicted by a model fitted only on the windows before it.")
-                condition(met: overall, "Better overall than \(baseline)",
+                condition(met: overall, "A real gain over \(baseline)",
                           overallDetail(e, baseline: baseline))
             }
         }
@@ -150,11 +150,14 @@ private struct LearnedWeightsConditions: View {
     private func overallDetail(_ e: ModelEvaluation?, baseline: String) -> String {
         guard let e else { return "Not scored yet." }
         func f(_ x: Double) -> String { x.formatted(.number.precision(.fractionLength(4))) }
-        guard let learned = e.logLoss, let prior = e.priorLogLoss else {
-            return "Brier \(f(e.brierScore)) learned vs. \(f(e.priorBrierScore)) \(baseline) (log-loss appears after the next retrain)."
+        guard let learned = e.logLoss, let prior = e.priorLogLoss, let gain = e.gain, let margin = e.gainMargin else {
+            return "Brier \(f(e.brierScore)) learned vs. \(f(e.priorBrierScore)) \(baseline) (the full check appears after the next retrain)."
         }
-        let verdict = learned < prior ? "lower, as needed" : "not lower yet"
-        return "Log-loss across those blocks: \(f(learned)) learned vs. \(f(prior)) \(baseline) — \(verdict). Accuracy \(BotEngine.percent(e.accuracy)) vs. \(BotEngine.percent(e.priorAccuracy))."
+        let milli = { (x: Double) in (x * 1000).formatted(.number.precision(.fractionLength(2))) }
+        let verdict = e.isSignificantGain ? "bigger than its margin, as needed"
+                    : gain > 0 ? "smaller than its margin, so it could be chance"
+                    : "no gain"
+        return "Log-loss across those blocks: \(f(learned)) learned vs. \(f(prior)) \(baseline). Gain \(gain >= 0 ? "+" : "−")\(milli(abs(gain))) ± \(milli(margin)) milli per window — \(verdict). Accuracy \(BotEngine.percent(e.accuracy)) vs. \(BotEngine.percent(e.priorAccuracy))."
     }
 
     private func condition(met: Bool, _ title: String, _ detail: String) -> some View {

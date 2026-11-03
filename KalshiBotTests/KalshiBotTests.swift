@@ -274,6 +274,17 @@ struct ModelTrainerTests {
         #expect(!noise.hasEnoughData)     // not present in these samples at all
     }
 
+    @Test func switchingOnNeedsASignificantGainStayingOnAllowsADip() {
+        // Off: most blocks won, but a gain within its margin isn't enough.
+        #expect(!ModelTrainer.decide(usingLearned: false, won: 3, folds: 4, gain: 0.0003, margin: 0.001))
+        #expect(ModelTrainer.decide(usingLearned: false, won: 3, folds: 4, gain: 0.004, margin: 0.001))
+        #expect(!ModelTrainer.decide(usingLearned: false, won: 2, folds: 4, gain: 0.004, margin: 0.001))
+        // On: a small or insignificant dip keeps them; clearly behind switches back.
+        #expect(ModelTrainer.decide(usingLearned: true, won: 2, folds: 4, gain: -0.0002, margin: 0.001))
+        #expect(!ModelTrainer.decide(usingLearned: true, won: 1, folds: 4, gain: 0.0001, margin: 0.001))
+        #expect(!ModelTrainer.decide(usingLearned: true, won: 3, folds: 4, gain: -0.003, margin: 0.001))
+    }
+
     @Test func bonferroniRaisesTheBarForSeveralSignals() {
         #expect(abs(ModelTrainer.zScore(forTests: 1) - 1.96) < 0.01)
         #expect(abs(ModelTrainer.zScore(forTests: 6) - 2.64) < 0.01)

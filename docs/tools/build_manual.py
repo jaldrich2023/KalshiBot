@@ -284,7 +284,7 @@ page = f"""<!doctype html>
   <p class="cover-meta">{inline(intro[1]) if len(intro) > 1 else ""}</p>
   <figure class="cover-shot glass-frame"><img src="{fix_link(hero[1])}" alt="{html.escape(hero[0])}"></figure>
   <p class="cover-lede">{inline(intro[2]) if len(intro) > 2 else ""}</p>
-  <p class="cover-foot">© 2026 I'm The Team, LLC · github.com/jaldrich2023/KalshiBot</p>
+  <p class="cover-foot">© 2026 John Aldrich · MIT License · github.com/jaldrich2023/KalshiBot</p>
 </section>
 
 <div class="flow">

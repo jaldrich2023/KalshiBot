@@ -5,6 +5,37 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.23.0] — 2026-11-03 · Build 43
+
+### Changed
+- **Kalshi Bot is now free and open-source software under the MIT License**, copyright
+  John Aldrich. It replaces the proprietary end user license agreement. The financial-risk,
+  third-party data and trademark terms are kept in a new `DISCLAIMER.md`, and the About
+  window shows both.
+- The author is John Aldrich throughout the app (About window, copyright) and the docs.
+- CONTRIBUTING and the pull request template now welcome pull requests.
+- The app's bundle identifier is unchanged, so existing data and settings carry over.
+
+## [2.22.1] — 2026-11-03 · Build 42
+
+### Changed
+- **The window has a fixed size: 2,400 × 1,600 points**, and isn't resizable. On a screen
+  too small for that it shrinks to fit, so it never runs off the edge; anything that then
+  doesn't fit scrolls inside the window.
+
+## [2.22.0] — 2026-11-03 · Build 40
+
+### Changed
+- **Switching to learned weights now needs a real gain.** Besides winning at least 3 of
+  the 4 walk-forward blocks, the learned weights' overall log-loss improvement over
+  Kalshi's odds must be bigger than its 95% margin of error. Before, any improvement
+  counted, and on Nov 3 a 0.0003 gain — almost certainly chance — switched the model.
+- **Once on, learned weights stay on** unless they fall clearly behind: winning fewer
+  than half the blocks, or doing significantly worse overall. A small dip no longer
+  flips the model back and forth.
+- A switch made under the old rule is re-judged under the new one at the next retrain.
+- The "Switching to learned weights" panel shows the gain and its margin.
+
 ## [2.21.0] — 2026-11-03 · Build 39
 
 ### Added

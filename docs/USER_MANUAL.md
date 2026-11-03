@@ -2,7 +2,7 @@
 
 Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.
 
-Version 2.21.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC
+Version 2.23.0 · macOS 27.2 or later · © 2026 John Aldrich
 
 ![The dashboard during a live window](images/01-dashboard.jpg)
 
@@ -27,7 +27,7 @@ You don't need a Kalshi account or any API keys. Kalshi Bot reads only public ma
 
 ### First launch
 
-1. Open Kalshi Bot. It starts automatically, and the status pill at the top left of the toolbar turns to **Live**.
+1. Open Kalshi Bot. It starts automatically, and the status pill at the top left of the toolbar turns to **Live**. The window has a fixed size of 2,400 × 1,600 points; on a smaller screen it shrinks to fit and the dashboard scrolls inside it.
 2. The **Model** card shows "Rebuilding past windows…". Kalshi Bot downloads up to 180 days of Kalshi market history and Coinbase 1-minute candles, then rebuilds each past window as it looked at the call. This takes a few minutes the first time. The download is saved, so later launches fetch only what's new.
 3. When the current window reaches the call time (+3 minutes by default), the **Prediction** card locks a call: Up or Down, with a probability.
 4. When the window closes and Kalshi settles it, the call is scored, the **Accuracy** card updates, and the model retrains.
@@ -280,7 +280,7 @@ A timestamped list of what the bot is doing: windows opening, calls locking, set
 
 - **Training data.** Every settled window is a training example: the live windows the bot watched, plus past windows rebuilt from Kalshi's history and Coinbase's 1-minute candles (up to 180 days). Recent windows count more than old ones.
 - **Market-anchored.** The model starts from Kalshi's own odds. Learned weights adjust those odds only when the inputs carry information the price doesn't.
-- **Held-out check.** After every settlement the model is scored walk-forward: the newest 40% of windows is split into four blocks, and each is predicted by a model fitted only on the windows before it. Learned weights are used only if they beat Kalshi's odds in at least three of the four blocks and overall, so one lucky stretch can't switch the bot over; otherwise it follows Kalshi.
+- **Held-out check.** After every settlement the model is scored walk-forward: the newest 40% of windows is split into four blocks, and each is predicted by a model fitted only on the windows before it. Learned weights are used only if they beat Kalshi's odds in at least three of the four blocks *and* their overall gain is bigger than its margin of error, so chance can't switch the bot over; otherwise it follows Kalshi. Once on, they stay on unless they fall clearly behind (fewer than half the blocks won, or significantly worse overall), so a small dip doesn't flip the bot back and forth.
 - **Promotion trials.** Context-only signals are re-tested after each retrain. A result counts toward promotion only when it's judged on at least 200 windows that settled since that signal's last counted result, so three wins in a row are three separate pieces of evidence (about six days apart at minimum). The significance bar is also raised for testing nine signals at once (a z of about 2.77 instead of 1.96), so one signal doesn't look significant by chance.
 - **Updates right after the close.** Accuracy updates and the model retrains as soon as Kalshi settles a window, without waiting for the next call.
 
@@ -322,8 +322,8 @@ The saved market download (`MarketHistory.v1.json`) lives in the app's Caches fo
 
 ## 12. Legal
 
-Kalshi Bot is licensed, not sold, under the end user license agreement in [LICENSE](../LICENSE). Its source code is public to read, but reading it gives you no right to copy, modify or redistribute it.
+Kalshi Bot is free and open-source software under the [MIT License](../LICENSE): you may use, copy, modify and distribute it, provided the copyright notice and license are included. It comes with no warranty. The full terms on financial risk, third-party data and trademarks are in the [disclaimer](../DISCLAIMER.md).
 
 Kalshi Bot isn't financial advice. Its calls are probabilities, not certainties, and event contracts and digital assets involve a substantial risk of loss.
 
-Kalshi, CF Benchmarks, BRTI and the exchange names are trademarks of their respective owners. Kalshi Bot's BRTI estimate is an independent approximation, not the official index. I'm The Team, LLC isn't affiliated with, endorsed by or sponsored by any of them.
+Kalshi, CF Benchmarks, BRTI and the exchange names are trademarks of their respective owners. Kalshi Bot's BRTI estimate is an independent approximation, not the official index. Kalshi Bot and its author aren't affiliated with, endorsed by or sponsored by any of them.

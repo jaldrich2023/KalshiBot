@@ -25,7 +25,7 @@ struct AboutView: View {
                     .accessibilityHidden(true)
                 Text("Kalshi Bot")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
-                Text("I'm The Team, LLC")
+                Text("John Aldrich")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Text("Version \(version.marketing) · Build \(version.build)")
@@ -68,7 +68,7 @@ struct AboutView: View {
 }
 
 extension AboutView {
-    /// Plain-language summary of section 4 of the license.
+    /// Plain-language summary of the disclaimer (DISCLAIMER.md).
     private var disclaimer: some View {
         VStack(alignment: .leading, spacing: 8) {
             CardHeader(title: "Not financial advice", systemImage: "exclamationmark.shield")

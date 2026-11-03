@@ -1,15 +1,16 @@
 <!--
-Kalshi Bot is proprietary software. Code contributions are accepted only by prior
-arrangement (see CONTRIBUTING.md). Pull requests that weren't agreed beforehand will be closed.
+Thanks for contributing! Kalshi Bot is MIT-licensed; by opening this pull request you agree
+your contribution is licensed under the same terms. For large changes, please link the issue
+where the approach was discussed (see CONTRIBUTING.md).
 -->
 
 ## Summary
 
 <!-- What does this change, and why? -->
 
-## Related issue / arrangement
+## Related issue
 
-<!-- Link the issue where this work was agreed, e.g. "Closes #12". -->
+<!-- Link the issue this addresses, if any, e.g. "Closes #12". -->
 
 ## Changes
 

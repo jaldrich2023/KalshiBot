@@ -12,8 +12,6 @@ import AppKit
 @main
 struct KalshiBotApp: App {
     @State private var engine = BotEngine()
-    /// Set by the dashboard once it has measured itself; until then, a sensible default.
-    @AppStorage("dashboardRequiredHeight") private var dashboardHeight: Double = 0
 
     init() {
         Self.quitOtherInstances()
@@ -45,6 +43,10 @@ struct KalshiBotApp: App {
         }
     }()
 
+    /// The window's fixed content size, in points: a 2,400 × 1,600 window once macOS adds
+    /// the 52-point title bar.
+    static let windowSize = CGSize(width: 2400, height: 1548)
+
     /// The usable part of the main screen (below the menu bar, beside the Dock).
     private var screenFrame: CGRect {
         NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1819, height: 1536)
@@ -54,11 +56,11 @@ struct KalshiBotApp: App {
         WindowGroup {
             ContentView()
                 .environment(engine)
-                // As wide as the dashboard's five columns use well, and tall enough to show
-                // all of it — but never larger than the screen, so nothing runs off it
-                // (anything that still doesn't fit scrolls inside the window).
-                .frame(width: min(2400, screenFrame.width - 40),
-                       height: min(max(dashboardHeight, 900), screenFrame.height))
+                // A fixed size the five-column dashboard is laid out for, shrunk only on a
+                // screen too small for it, so nothing runs off the edge (anything that
+                // then doesn't fit scrolls inside the window).
+                .frame(width: min(Self.windowSize.width, screenFrame.width - 40),
+                       height: min(Self.windowSize.height, screenFrame.height))
         }
         .windowResizability(.contentSize)
         // Always open the dashboard at launch (and from the Dock), never restore a

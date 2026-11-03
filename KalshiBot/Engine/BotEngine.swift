@@ -1241,8 +1241,12 @@ final class BotEngine {
         let excluded = excludedFeatures
         let promotedNow = promoted
         let marks = trialMarks
+        // Learned weights switched on before 2.22 (with no significance check) are judged
+        // afresh, as if off; the "stay on" allowance applies only to a significant switch.
+        let usingLearned = model.usesLearnedWeights && model.evaluation?.gainMargin != nil
         let trained = await Task.detached(priority: .utility) {
-            ModelTrainer.train(samples, excluding: excluded, promoted: promotedNow, lastTrialMarks: marks)
+            ModelTrainer.train(samples, excluding: excluded, promoted: promotedNow, lastTrialMarks: marks,
+                               usingLearned: usingLearned)
         }.value
 
         model = trained

@@ -15,11 +15,11 @@ A macOS app that calls every Kalshi 15-minute Bitcoin Up/Down window, shows the 
 <a href="https://github.com/jaldrich2023/KalshiBot/releases">Releases</a>
 </p>
 
-<p align="center"><b>Current version: 2.21.0 (Build 39)</b> · macOS 27.2 or later</p>
+<p align="center"><b>Current version: 2.23.0 (Build 43)</b> · macOS 27.2 or later</p>
 
 ![The dashboard during a live window](docs/images/01-dashboard.jpg)
 
-> **Not financial advice.** Kalshi Bot gives statistical estimates for information and education only. Every call is a probability, not a certainty: a 70% call is expected to miss about 3 times in 10, and past accuracy doesn't guarantee future results, and event contracts carry a real risk of loss. See [LICENSE](LICENSE), section 4.
+> **Not financial advice.** Kalshi Bot gives statistical estimates for information and education only. Every call is a probability, not a certainty: a 70% call is expected to miss about 3 times in 10, and past accuracy doesn't guarantee future results, and event contracts carry a real risk of loss. See the [disclaimer](DISCLAIMER.md).
 
 ## What it does
 
@@ -30,7 +30,7 @@ Kalshi's **KXBTC15M** markets ask one question every 15 minutes: will Bitcoin's 
 - **Estimates the risk of a reversal.** It gives the calibrated chance that the side now ahead loses (shown next to Kalshi's own figure), how strong the momentum is, and how likely the price is to break the window's high or low. The corrections refit from history, and a live check shows how often its figures came true.
 - **Recommends trades for your style.** Conservative, Neutral and Aggressive set the required edge, the price range, the entry cutoff and the exits. It suggests entries only on the side it called. You can set your own stop-loss and take-profit percentages, and a stake for profit and loss estimates.
 - **Keeps score honestly.** It reports accuracy with margins of error, Brier scores, and paired comparisons with Kalshi's favorite on the same windows. It shows how many correct calls it needs to reach 70%. Results are broken down by day, hour, week and month.
-- **Trains itself and checks its work.** It learns from up to 180 days of public Kalshi and Coinbase history, saved on disk so later launches fetch only what's new, plus every live window. Learned weights are used only when they beat Kalshi's own odds in most of four walk-forward blocks of windows they weren't trained on. The other indicators are re-tested after every window and promoted only after significant wins on three separate sets of fresh windows, with the bar raised for testing several signals at once.
+- **Trains itself and checks its work.** It learns from up to 180 days of public Kalshi and Coinbase history, saved on disk so later launches fetch only what's new, plus every live window. Learned weights are used only when they beat Kalshi's own odds in most of four walk-forward blocks of windows they weren't trained on, by more than chance. The other indicators are re-tested after every window and promoted only after significant wins on three separate sets of fresh windows, with the bar raised for testing several signals at once.
 - **Runs unattended.** It keeps the Mac awake while it runs (optional), reconnects dropped or silent price streams on its own, and can reset just the model, clear the data after copying the log, or erase everything including settings and the saved download.
 
 ### What to expect
@@ -90,15 +90,16 @@ Run the tests with **Product › Test** (⌘U). The suite uses Swift Testing. On
 - [Changelog](CHANGELOG.md)
 - [Releases](https://github.com/jaldrich2023/KalshiBot/releases)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
+- [Disclaimer](DISCLAIMER.md)
 
 To rebuild the PDFs after editing the docs, run `docs/tools/make_pdfs.sh`. It regenerates the manual's HTML from `docs/USER_MANUAL.md` and prints both documents with WebKit, with no browser needed.
 
 ## Contributing and security
 
-Kalshi Bot is proprietary software whose source is public to read. Bug reports and feature requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Please report security problems privately, as described in [SECURITY.md](SECURITY.md). Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
+Kalshi Bot is open source under the MIT License. Bug reports, feature requests and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Please report security problems privately, as described in [SECURITY.md](SECURITY.md). Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-Copyright © 2026 I'm The Team, LLC. All rights reserved. Kalshi Bot is licensed under the end user license agreement in [LICENSE](LICENSE). Being able to read the source doesn't give you any right to copy, modify or redistribute it.
+Copyright © 2026 John Aldrich. Kalshi Bot is free and open-source software under the [MIT License](LICENSE): you may use, copy, modify and distribute it, provided the copyright notice and license are included. It comes with no warranty.
 
-Kalshi, CF Benchmarks, BRTI and the exchange names are trademarks of their respective owners. Kalshi Bot isn't affiliated with, endorsed by or sponsored by any of them.
+Please also read the [disclaimer](DISCLAIMER.md): Kalshi Bot isn't financial advice. Kalshi, CF Benchmarks, BRTI and the exchange names are trademarks of their respective owners, and Kalshi Bot isn't affiliated with, endorsed by or sponsored by any of them.
