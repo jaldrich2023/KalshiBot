@@ -5,6 +5,23 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.21.0] — 2026-11-03 · Build 39
+
+### Added
+- **Windows per indicator** on every Indicators card: how many settled windows have the
+  signal (for live-only signals, how many live windows).
+- **Promotion progress** on each context signal: its current streak of counted results,
+  how many settled windows until its next result can count, and the fewest windows
+  before it could be promoted (or, once promoted, demoted) if every result goes its way.
+  Live-only signals show their progress toward the 500 live windows trials need.
+- **"Switching to learned weights"** panel on the Indicators tab, listing the three
+  conditions for predicting with learned weights instead of Kalshi's odds — enough
+  history, winning most walk-forward blocks, and lower overall log-loss — with a ✓ or ○
+  and the current numbers for each. There's no fixed window count; it's re-checked after
+  every settled window.
+- The model now records its walk-forward log-loss (learned vs. Kalshi's odds), the
+  measure behind the "overall" condition.
+
 ## [2.20.0] — 2026-11-03 · Build 38
 
 ### Added

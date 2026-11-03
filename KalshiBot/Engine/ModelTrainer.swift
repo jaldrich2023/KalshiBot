@@ -61,6 +61,10 @@ nonisolated struct ModelEvaluation: Codable, Sendable, Equatable {
     /// Walk-forward blocks scored, and how many the learned weights won (nil before 2.16).
     var folds: Int?
     var foldsWon: Int?
+    /// Average log-loss on the scored windows (lower is better), learned vs. starting
+    /// weights — the "overall" test for switching (nil before 2.21).
+    var logLoss: Double?
+    var priorLogLoss: Double?
 }
 
 nonisolated enum ModelTrainer {
@@ -149,7 +153,8 @@ nonisolated enum ModelTrainer {
             holdoutCount: learnedScores.count,
             accuracy: Double(fittedRight) / scored, brierScore: fittedBrier / scored,
             priorAccuracy: Double(priorRight) / scored, priorBrierScore: priorBrier / scored,
-            regularization: lambda, folds: folds, foldsWon: won
+            regularization: lambda, folds: folds, foldsWon: won,
+            logLoss: fittedLoss / scored, priorLogLoss: priorLoss / scored
         )
         let candidates = FeatureKey.promotionCandidates.filter { !excluded.contains($0) }
         for key in candidates {

@@ -24,6 +24,7 @@ struct IndicatorsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.spacing) {
                 PredictionSummary(record: record)
+                LearnedWeightsConditions()
 
                 section("Model inputs", detail: "The only signals that can move the call. Each starts at zero weight and has to earn it on held-out windows.")
                 grid(FeatureKey.allCases.filter(engine.model.isActive), open: open, liveContributions: liveContributions)
@@ -93,7 +94,7 @@ private struct PredictionSummary: View {
                 metric("P(up) now", engine.liveProbability.map(BotEngine.percent) ?? "—", detail: "Live, informational only")
                 metric("Kalshi Yes now", engine.currentMarket?.yesMid.map(BotEngine.percent) ?? "—", detail: "The market's own odds")
                 metric("Predicting with", engine.model.usesLearnedWeights ? "Learned weights" : (engine.model.marketAnchored ? "Kalshi's odds" : "Starting weights"),
-                       detail: "Trained on \(engine.model.trainingCount) windows")
+                       detail: "Trained on \(engine.model.trainingCount.formatted()) windows")
                 Spacer(minLength: 0)
             }
         }
@@ -107,6 +108,65 @@ private struct PredictionSummary: View {
             Text(detail).font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// The three conditions for predicting with learned weights instead of Kalshi's odds
+/// (or the starting weights), and where each one stands after the latest retrain.
+private struct LearnedWeightsConditions: View {
+    @Environment(BotEngine.self) private var engine
+
+    var body: some View {
+        let model = engine.model
+        let baseline = model.marketAnchored ? "Kalshi's odds" : "the starting weights"
+        let e = model.evaluation
+        let folds = e?.folds ?? ModelTrainer.walkForwardFolds
+        let won = e?.foldsWon ?? 0
+        let needed = max(folds - 1, 1)
+        let enough = model.trainingCount >= ModelTrainer.minimumForEvaluation
+        let mostBlocks = e != nil && won >= needed
+        let overall = e.flatMap { ev in ev.logLoss.flatMap { l in ev.priorLogLoss.map { l < $0 } } } ?? false
+
+        Panel(title: "Switching to learned weights", systemImage: "checklist") {
+            Text(model.usesLearnedWeights
+                 ? "The model is predicting with learned weights: all three conditions are met."
+                 : "The model predicts with \(baseline) until learned weights meet all three conditions. They're re-checked after every settled window, so there's no fixed number of windows to wait for — only the evidence.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
+                condition(met: enough, "Enough history",
+                          enough ? "\(model.trainingCount.formatted()) settled windows with Kalshi's odds (needs \(ModelTrainer.minimumForEvaluation))."
+                                 : "\(model.trainingCount.formatted()) of the \(ModelTrainer.minimumForEvaluation) settled windows needed — \(ModelTrainer.minimumForEvaluation - model.trainingCount) more.")
+                condition(met: mostBlocks, "Win most walk-forward blocks",
+                          e == nil ? "Not scored yet."
+                                   : "Won \(won) of \(folds); needs \(needed). The newest \(Int(ModelTrainer.walkForwardShare * 100))% of windows (\(e!.holdoutCount.formatted())) is split into \(folds) blocks, each predicted by a model fitted only on the windows before it.")
+                condition(met: overall, "Better overall than \(baseline)",
+                          overallDetail(e, baseline: baseline))
+            }
+        }
+        .font(.callout)
+    }
+
+    private func overallDetail(_ e: ModelEvaluation?, baseline: String) -> String {
+        guard let e else { return "Not scored yet." }
+        func f(_ x: Double) -> String { x.formatted(.number.precision(.fractionLength(4))) }
+        guard let learned = e.logLoss, let prior = e.priorLogLoss else {
+            return "Brier \(f(e.brierScore)) learned vs. \(f(e.priorBrierScore)) \(baseline) (log-loss appears after the next retrain)."
+        }
+        let verdict = learned < prior ? "lower, as needed" : "not lower yet"
+        return "Log-loss across those blocks: \(f(learned)) learned vs. \(f(prior)) \(baseline) — \(verdict). Accuracy \(BotEngine.percent(e.accuracy)) vs. \(BotEngine.percent(e.priorAccuracy))."
+    }
+
+    private func condition(met: Bool, _ title: String, _ detail: String) -> some View {
+        GridRow(alignment: .firstTextBaseline) {
+            Image(systemName: met ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(met ? .green : .secondary)
+                .accessibilityLabel(met ? "Met" : "Not met")
+            Text(title).fontWeight(.semibold)
+            Text(detail)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -198,6 +258,9 @@ private struct IndicatorPane: View {
             value("Now", nowText)
             value("Weight", weightText)
                 .help(weightHelp)
+            value("Windows", windowsText)
+                .help(key.isBaseInput ? "Settled windows the model is trained on; this input is in every one."
+                                      : "Settled windows that have this signal, out of the \(engine.model.trainingCount.formatted()) the model is trained on.")
             Spacer(minLength: 0)
             direction
             Text(badgeText)
@@ -213,6 +276,30 @@ private struct IndicatorPane: View {
 
         labeled("Reading now", reading)
         labeled("Effect on prediction", effect)
+        if !key.isBaseInput {
+            labeled(engine.promotionProgress(for: key)?.isPromoted == true ? "Demotion" : "Promotion", promotionText)
+        }
+    }
+
+    private var windowsText: String {
+        if key.isBaseInput { return engine.model.trainingCount.formatted() }
+        return engine.promotionProgress(for: key).map { $0.windows.formatted() } ?? "—"
+    }
+
+    /// How far this context signal is from changing status, in settled windows.
+    private var promotionText: String {
+        guard let p = engine.promotionProgress(for: key) else { return "Not trialled yet." }
+        let goal = Self.goal(p)
+        let count = "\(p.streak) of \(BotEngine.trialStreakToChange) \(p.isPromoted ? "trials without a gain" : "significant wins") in a row so far."
+        if p.isLiveOnly && p.windows < ModelTrainer.minimumLiveTrialWindows {
+            return "Live windows only: \(p.windows.formatted()) of the \(ModelTrainer.minimumLiveTrialWindows) needed to start trials. At least \(p.windowsNeeded.formatted()) more live windows before it could \(goal)."
+        }
+        let next = p.windowsToNextTrial == 0 ? "its next result counts at the next retrain" : "its next result counts after \(p.windowsToNextTrial.formatted()) more settled windows"
+        return "\(count) \(next.prefix(1).uppercased() + next.dropFirst()); at least \(p.windowsNeeded.formatted()) more windows before it could \(goal), if every counted result goes its way."
+    }
+
+    private static func goal(_ p: BotEngine.PromotionProgress) -> String {
+        p.isPromoted ? "be demoted" : "be promoted"
     }
 
     private func value(_ label: String, _ text: String?) -> some View {

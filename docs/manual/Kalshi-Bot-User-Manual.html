@@ -23,7 +23,7 @@
   </div>
   <h1 class="cover-title">User Manual</h1>
   <p class="cover-tag">Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.</p>
-  <p class="cover-meta">Version 2.20.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC</p>
+  <p class="cover-meta">Version 2.21.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC</p>
   <figure class="cover-shot glass-frame"><img src="../images/01-dashboard.jpg" alt="The dashboard during a live window"></figure>
   <p class="cover-lede">Kalshi Bot follows every Kalshi KXBTC15M window. It makes a call at the minute you choose, shows you the live market and the evidence behind the call, suggests entries and exits for your trading style, and scores every result against Kalshi's own price. This manual explains every card, chart and setting.</p>
   <p class="cover-foot">© 2026 I'm The Team, LLC · github.com/jaldrich2023/KalshiBot</p>
@@ -219,7 +219,8 @@
 <div class="chapter-head"><span class="num">05</span><h2>Indicators</h2></div>
 <figure class="shot wide"><img src="../images/02-indicators.jpg" alt="The Indicators tab"><figcaption>The Indicators tab</figcaption></figure>
 <p>The <strong>Indicators</strong> tab shows every signal the bot computes, each on its own card:</p>
-<ul><li><strong>At call / Now:</strong> the value when the call locked, and the value now.</li><li><strong>Weight:</strong> the signal's weight in the model. <strong>Not used</strong> means it isn't a model input.</li><li><strong>Favors Up / Favors Down:</strong> the direction the signal points.</li><li><strong>Reading now:</strong> what the value means in plain language.</li><li><strong>Effect on prediction:</strong> whether it's moving the call and why.</li></ul>
+<ul><li><strong>At call / Now:</strong> the value when the call locked, and the value now.</li><li><strong>Weight:</strong> the signal's weight in the model. <strong>Not used</strong> means it isn't a model input.</li><li><strong>Favors Up / Favors Down:</strong> the direction the signal points.</li><li><strong>Reading now:</strong> what the value means in plain language.</li><li><strong>Effect on prediction:</strong> whether it's moving the call and why.</li><li><strong>Windows:</strong> how many settled windows have this signal (live windows, for live-only signals).</li><li><strong>Promotion</strong> (context signals only): its streak of counted results, how many windows until its next result can count, and the fewest windows before it could be promoted.</li></ul>
+<p>The <strong>Switching to learned weights</strong> panel at the top lists the three conditions for predicting with learned weights instead of Kalshi's odds, with the current numbers for each. There's no fixed window count; the conditions are re-checked after every settled window.</p>
 <h3 id="model-inputs">Model inputs</h3>
 <p><strong>Spot vs. target</strong>, <strong>5m momentum</strong>, <strong>RSI(14)</strong> and <strong>Kalshi implied odds</strong> are the only signals that can move the call. Each starts at zero weight and earns weight only by improving predictions on held-out windows. Kalshi's implied odds are the anchor: the call starts from Kalshi's price, and the others can shift it only once they've proven themselves.</p>
 <h3 id="context-only">Context only</h3>

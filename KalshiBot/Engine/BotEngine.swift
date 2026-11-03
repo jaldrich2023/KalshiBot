@@ -169,6 +169,39 @@ final class BotEngine {
     private var trialMarks: [String: Int] = [:]
     static let trialStreakToChange = 3
 
+    /// Where a context signal stands on its way to promotion (or, if promoted, demotion).
+    struct PromotionProgress: Equatable {
+        /// Settled windows that have this signal.
+        let windows: Int
+        let isLiveOnly: Bool
+        let isPromoted: Bool
+        /// Consecutive counted results in the direction that would change its status.
+        let streak: Int
+        /// Settled windows until its next result can count (0 = the next retrain).
+        let windowsToNextTrial: Int
+        /// The fewest settled windows before it could change status, if every counted
+        /// result from here goes its way.
+        let windowsNeeded: Int
+    }
+
+    func promotionProgress(for key: FeatureKey) -> PromotionProgress? {
+        guard !key.isBaseInput, let trial = model.trial(for: key) else { return nil }
+        let raw = key.rawValue
+        let liveOnly = trial.liveOnly == true
+        let pool = liveOnly ? (trial.liveWindows ?? 0) : Int((trial.coverage * Double(model.trainingCount)).rounded())
+        let fresh = ModelTrainer.freshWindowsPerTrial
+        // A first counted result judges the newest 20%, so it needs that to be ≥ `fresh`.
+        let firstCounted = max(liveOnly ? ModelTrainer.minimumLiveTrialWindows : 0, fresh * 5)
+        let nextCountedAt = trialMarks[raw].map { $0 + fresh } ?? firstCounted
+        let untilNext = max(nextCountedAt - pool, 0)
+        let isPromoted = promoted.contains(key)
+        let streak = trialStreaks[raw] ?? 0
+        let soFar = isPromoted ? max(-streak, 0) : max(streak, 0)
+        let remaining = max(Self.trialStreakToChange - soFar, 1)
+        return PromotionProgress(windows: pool, isLiveOnly: liveOnly, isPromoted: isPromoted, streak: soFar,
+                                 windowsToNextTrial: untilNext, windowsNeeded: untilNext + fresh * (remaining - 1))
+    }
+
     /// Keeps the Mac from idle-sleeping while the bot runs, so no window is missed.
     var keepMacAwake: Bool {
         didSet {

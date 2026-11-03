@@ -2,7 +2,7 @@
 
 Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.
 
-Version 2.20.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC
+Version 2.21.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC
 
 ![The dashboard during a live window](images/01-dashboard.jpg)
 
@@ -209,6 +209,10 @@ The **Indicators** tab shows every signal the bot computes, each on its own card
 - **Favors Up / Favors Down:** the direction the signal points.
 - **Reading now:** what the value means in plain language.
 - **Effect on prediction:** whether it's moving the call and why.
+- **Windows:** how many settled windows have this signal (live windows, for live-only signals).
+- **Promotion** (context signals only): its streak of counted results, how many windows until its next result can count, and the fewest windows before it could be promoted.
+
+The **Switching to learned weights** panel at the top lists the three conditions for predicting with learned weights instead of Kalshi's odds, with the current numbers for each. There's no fixed window count; the conditions are re-checked after every settled window.
 
 ### Model inputs
 
