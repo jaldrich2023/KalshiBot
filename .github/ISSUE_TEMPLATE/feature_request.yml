@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest an idea or an improvement for Kalshi Bot.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do?
+      description: The problem or the goal, in your own words.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: How you'd like it to work. Mockups or sketches are welcome.
+  - type: textarea
+    id: signal
+    attributes:
+      label: For new indicators or signals
+      description: |
+        How would it be computed from data available at the call? Have you tested it on held-out windows against Kalshi's price at the call? See "Proposing a new signal" in CONTRIBUTING.md.

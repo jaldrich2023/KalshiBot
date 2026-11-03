@@ -1,0 +1,22 @@
+# Xcode per-user state and build products
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+
+# macOS
+.DS_Store
+
+# Test results, archives, symbols, coverage
+*.xcresult
+*.xcarchive
+*.dSYM
+*.dSYM.zip
+*.profraw
+*.gcda
+
+# SwiftPM
+.build/
+.swiftpm/
+# Xcode-managed SwiftPM workspace config (no packages are used)
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/

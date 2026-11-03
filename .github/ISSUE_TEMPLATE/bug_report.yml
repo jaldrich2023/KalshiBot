@@ -1,0 +1,56 @@
+name: Bug report
+description: Something in Kalshi Bot isn't working as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Please check [Known issues](https://github.com/jaldrich2023/KalshiBot/blob/main/docs/KNOWN_ISSUES.md) first.
+        **Security problems:** don't file them here; follow [SECURITY.md](https://github.com/jaldrich2023/KalshiBot/blob/main/SECURITY.md).
+        **Wrong calls aren't bugs:** predictions are probabilities and are often wrong. Report a call only if the app did something it shouldn't (for example, scored it against the wrong settlement).
+  - type: input
+    id: version
+    attributes:
+      label: Kalshi Bot version
+      description: Kalshi Bot › About Kalshi Bot
+      placeholder: Version 2.14.2 · Build 27
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac model
+      placeholder: macOS 27.2, MacBook Pro (M5)
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the Dashboard
+        2. …
+  - type: input
+    id: window
+    attributes:
+      label: Window ticker and time (if it's about a particular window)
+      description: Shown under the Current Window card or in the Prediction Log.
+      placeholder: KXBTC15M-26NOV021815-15 at 5:03 PM ET
+  - type: textarea
+    id: activity
+    attributes:
+      label: Activity log
+      description: Copy the lines from the Activity tab around the time of the problem.
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag images here if they help.

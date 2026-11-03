@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kalshi Bot — User Manual</title>
+<link rel="stylesheet" href="../brochure/kalshibot.css">
+<style>
+@page { size: Letter; margin: 0 0 0.55in 0; background: #070B10;
+  @bottom-left { content: "KALSHI BOT  ·  USER MANUAL"; color: rgba(255,255,255,.38); font: 600 7.5pt system-ui, -apple-system, "Helvetica Neue", sans-serif; letter-spacing: .18em; padding-left: 0.8in; vertical-align: top; padding-top: 0.08in; }
+  @bottom-right { content: counter(page); color: rgba(255,255,255,.55); font: 700 8pt system-ui, -apple-system, "Helvetica Neue", sans-serif; padding-right: 0.8in; vertical-align: top; padding-top: 0.08in; }
+}
+@page :first { margin: 0; @bottom-left { content: none; } @bottom-right { content: none; } }
+</style>
+</head>
+<body class="manual">
+<div class="page-glow" aria-hidden="true"></div>
+
+<section class="cover-page">
+  <div class="cover-top">
+    <img class="app-icon" src="../images/app-icon.png" alt="">
+    <div class="brandmark big"><span class="mark"></span><b>KALSHI</b> BOT</div>
+  </div>
+  <h1 class="cover-title">User Manual</h1>
+  <p class="cover-tag">Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.</p>
+  <p class="cover-meta">Version 2.14 · macOS 27.2 or later · © 2026 I'm The Team, LLC</p>
+  <figure class="cover-shot glass-frame"><img src="../images/01-dashboard.jpg" alt="The dashboard during a live window"></figure>
+  <p class="cover-lede">Kalshi Bot follows every Kalshi KXBTC15M window. It makes a call at the minute you choose, shows you the live market and the evidence behind the call, suggests entries and exits for your trading style, and scores every result against Kalshi's own price. This manual explains every card, chart and setting.</p>
+  <p class="cover-foot">© 2026 I'm The Team, LLC · github.com/jaldrich2023/KalshiBot</p>
+</section>
+
+<div class="flow">
+<section class="toc-page">
+  <div class="chapter-head"><h2>Contents</h2></div>
+  <ol class="toc"><li><a href="#1-getting-started"><span class="num">01</span><span class="t">Getting started</span></a><span class="subs"><a href="#before-you-begin">Before you begin</a> · <a href="#first-launch">First launch</a> · <a href="#the-toolbar">The toolbar</a></span></li><li><a href="#2-how-the-markets-work"><span class="num">02</span><span class="t">How the markets work</span></a></li><li><a href="#3-the-dashboard"><span class="num">03</span><span class="t">The Dashboard</span></a><span class="subs"><a href="#current-window">Current Window</a> · <a href="#prediction">Prediction</a> · <a href="#accuracy">Accuracy</a> · <a href="#model">Model</a> · <a href="#the-60-second-average-chart">The 60-second average chart</a> · <a href="#the-1-minute-candles-chart">The 1-minute candles chart</a> · <a href="#reversal-risk">Reversal Risk</a></span></li><li><a href="#4-trade-recommendations"><span class="num">04</span><span class="t">Trade recommendations</span></a><span class="subs"><a href="#trading-styles">Trading styles</a> · <a href="#the-recommendation">The recommendation</a> · <a href="#call-settings">Call settings</a> · <a href="#your-position">Your position</a> · <a href="#stop-loss-and-take-profit-lines">Stop-loss and take-profit lines</a> · <a href="#entry-and-exit-alerts">Entry and exit alerts</a></span></li><li><a href="#5-indicators"><span class="num">05</span><span class="t">Indicators</span></a><span class="subs"><a href="#model-inputs">Model inputs</a> · <a href="#context-only">Context only</a> · <a href="#what-has-been-tested">What has been tested</a></span></li><li><a href="#6-performance"><span class="num">06</span><span class="t">Performance</span></a><span class="subs"><a href="#hover-for-details">Hover for details</a></span></li><li><a href="#7-prediction-log"><span class="num">07</span><span class="t">Prediction Log</span></a></li><li><a href="#8-activity"><span class="num">08</span><span class="t">Activity</span></a></li><li><a href="#9-how-the-model-learns"><span class="num">09</span><span class="t">How the model learns</span></a></li><li><a href="#10-your-data"><span class="num">10</span><span class="t">Your data</span></a></li><li><a href="#11-troubleshooting"><span class="num">11</span><span class="t">Troubleshooting</span></a></li><li><a href="#12-legal"><span class="num">12</span><span class="t">Legal</span></a></li></ol>
+</section>
+
+<section class="chapter" id="1-getting-started">
+<div class="chapter-head"><span class="num">01</span><h2>Getting started</h2></div>
+<h3 id="before-you-begin">Before you begin</h3>
+<div class="callout"><p><strong>Kalshi Bot isn't financial advice.</strong> It gives statistical estimates for information and education only. Its predictions are often wrong, past accuracy doesn't guarantee future results, and event contracts carry a real risk of loss. You're responsible for your own trading decisions.</p></div>
+<p>You need:</p>
+<ul><li>a Mac running macOS 27.2 or later,</li><li>an internet connection.</li></ul>
+<p>You don't need a Kalshi account or any API keys. Kalshi Bot reads only public market data, and it <strong>never places orders</strong>. Any trade you make, you make yourself on Kalshi.</p>
+<h3 id="first-launch">First launch</h3>
+<ol><li>Open Kalshi Bot. It starts automatically, and the status pill at the top left of the toolbar turns to <strong>Live</strong>.</li><li>The <strong>Model</strong> card shows "Rebuilding past windows…". Kalshi Bot downloads up to 180 days of Kalshi market history and Coinbase 1-minute candles, then rebuilds each past window as it looked at the call. This takes about a minute.</li><li>When the current window reaches the call time (+3 minutes by default), the <strong>Prediction</strong> card locks a call: Up or Down, with a probability.</li><li>When the window closes and Kalshi settles it, the call is scored, the <strong>Accuracy</strong> card updates, and the model retrains.</li></ol>
+<p>While it's running, Kalshi Bot keeps your Mac from sleeping, so it doesn't miss a window. Click <strong>Stop</strong> in the toolbar to pause it; click <strong>Start</strong> to resume.</p>
+<h3 id="the-toolbar">The toolbar</h3>
+<table>
+<thead><tr>
+<th>Item</th>
+<th>What it does</th>
+</tr></thead><tbody>
+<tr>
+<td>Status pill</td>
+<td><strong>Live</strong> while the bot is running.</td>
+</tr>
+<tr>
+<td>Tabs</td>
+<td>Dashboard, Indicators, Performance, Prediction Log and Activity.</td>
+</tr>
+<tr>
+<td>Copy CSV</td>
+<td>Copies the whole prediction log to the clipboard as CSV, for a spreadsheet.</td>
+</tr>
+<tr>
+<td>Start / Stop</td>
+<td>Starts or pauses the bot.</td>
+</tr>
+</tbody></table>
+</section>
+<section class="chapter" id="2-how-the-markets-work">
+<div class="chapter-head"><span class="num">02</span><h2>How the markets work</h2></div>
+<p>Each KXBTC15M market covers one 15-minute window, for example 5:00–5:15 PM Eastern. It asks a single question: <strong>will Bitcoin settle at or above the target?</strong></p>
+<ul><li><strong>The target</strong> is the CF Benchmarks Bitcoin Real Time Index (BRTI), averaged over the 60 seconds before the window opens.</li><li><strong>The settlement</strong> is the same 60-second average over the last minute of the window.</li><li><strong>Yes</strong> pays $1 if it settles at or above the target ("Up"). <strong>No</strong> pays $1 if it settles below ("Down").</li><li>A contract's price, between 1¢ and 99¢, is the market's probability. Yes at 62¢ means the market gives Up about a 62% chance.</li></ul>
+<p>Kalshi charges a taker fee on each trade, rounded up to the next cent: 7% × price × (1 − price) per contract. Kalshi Bot includes this fee, and half the bid/ask spread, in every edge and profit figure it shows.</p>
+<p>Because both the target and the settlement are 60-second averages, the last minute matters a lot. Once the settlement minute starts, every second that passes locks in part of the answer. Kalshi Bot's odds take that into account.</p>
+</section>
+<section class="chapter" id="3-the-dashboard">
+<div class="chapter-head"><span class="num">03</span><h2>The Dashboard</h2></div>
+<figure class="shot wide"><img src="../images/06-top-row.jpg" alt="The top row: current window, prediction, accuracy and model"><figcaption>The top row: current window, prediction, accuracy and model</figcaption></figure>
+<h3 id="current-window">Current Window</h3>
+<ul><li><strong>The price</strong> is Kalshi Bot's estimate of the BRTI right now, with how far it is above or below the target.</li><li><strong>Window, Closes in, Target, Kalshi Yes</strong> show the window's times, the time left, the target price, and Kalshi's live Yes price.</li><li><strong>Sources</strong> lists the eight exchange feeds and each one's latest price, its gap to the estimate, and its weight. A ✓ means the source is in use. A source is dropped when its price is off-market (more than 0.05% from the median) or its feed has gone stale. With five or more sources, the highest and lowest are trimmed.</li><li><strong>Composite</strong> is the average of the sources in use. <strong>Index est.</strong> applies the <strong>BRTI calibration</strong>, a running correction learned by comparing past composites with Kalshi's published targets.</li><li>The window's ticker is shown at the bottom, for example <code>KXBTC15M-26NOV021815-15</code>.</li></ul>
+<h3 id="prediction">Prediction</h3>
+<p>Before the call time, the card says "No prediction locked for this window" and shows the live view only. At the call time it locks:</p>
+<ul><li><strong>The call:</strong> a large <strong>UP</strong> or <strong>DOWN</strong>, with P(up) and the confidence (the probability of the side called).</li><li><strong>Live:</strong> Kalshi's Yes and No prices right now, as percentages, with the buy and sell prices in cents.</li><li><strong>Bot now:</strong> what the model would say from the current price. This is for information only; the locked call doesn't change.</li></ul>
+<h3 id="accuracy">Accuracy</h3>
+<p>The scorecard for every settled call:</p>
+<ul><li><strong>Accuracy</strong>, with how many were correct and a 95% margin of error.</li><li><strong>Expected correct:</strong> how many the bot's own probabilities said should be right, with a 95% range. If the actual number is inside the range, the difference is ordinary luck.</li><li><strong>Brier score:</strong> the average squared error of the probabilities. Lower is better; 0.25 is a coin flip.</li><li><strong>Kalshi favorite accuracy, Kalshi Brier score, Edge vs. Kalshi:</strong> the same measures for Kalshi's own price on the same windows, and the difference with its margin of error.</li><li><strong>When ≥65% confident:</strong> accuracy on the more confident calls, for the bot and for Kalshi.</li><li><strong>Streaks:</strong> the current streak, the longest win streak and the longest losing streak.</li><li><strong>By confidence:</strong> accuracy in each confidence band. Well-calibrated calls are right about as often as their confidence says. For example, 55–60% calls should lose about 4 times in 10.</li></ul>
+<p>If <strong>Calls</strong> is set to confident calls only (see chapter 4), the card says how many low-confidence windows were skipped.</p>
+<h3 id="model">Model</h3>
+<ul><li><strong>Trained on:</strong> the windows the model learned from. <strong>Live / rebuilt</strong> splits them into windows the bot watched live and windows rebuilt from history.</li><li><strong>Predicting with:</strong> <strong>Kalshi market</strong> while learned adjustments haven't beaten Kalshi's own odds, or <strong>Learned weights</strong> once they have.</li><li><strong>Holdout test:</strong> the trained model and Kalshi's price, scored on the newest 20% of windows that the training never saw.</li><li><strong>Path to 70% accuracy:</strong> the number of correct calls in a row needed to bring overall accuracy to 70%, or, once it's there, how many misses in a row it can absorb. Each miss on the way adds about 2.3 more needed. The note underneath compares the goal with the calls' average confidence, which is where accuracy tends over time.</li><li><strong>Reset Model…</strong> asks for confirmation, then deletes all data and retrains from scratch. See chapter 10.</li></ul>
+<h3 id="the-60-second-average-chart">The 60-second average chart</h3>
+<figure class="shot medium"><img src="../images/07-price-chart.jpg" alt="The 60-second average chart, with stop-loss and take-profit"><figcaption>The 60-second average chart, with stop-loss and take-profit</figcaption></figure>
+<p>This chart follows the same 60-second average that Kalshi settles on, across the whole window.</p>
+<ul><li><strong>Target:</strong> the dashed line the window must finish at or above for Up.</li><li><strong>High and Low:</strong> the highest and lowest values the 60-second average has actually reached in this window, with the time and the chance of a new high or low before the close.</li><li><strong>Now, Trend and Projected:</strong> the current value, the trend over the last few minutes, and the projected close, with the likely close range shaded.</li><li><strong>Settlement minute:</strong> the shaded final minute.</li><li><strong>Stop-loss and Take profit:</strong> once a call is locked, these show where to exit the side that was called. Each label says what the contract would sell for at that price and your profit or loss at your stake. See chapter 4.</li></ul>
+<p>Use <strong>Layers</strong> at the top right to show or hide each element: the 60s average, Now, Target, Settlement minute, High/Low, Close range, Trend, Projection, and Stop &amp; take profit. Labels are arranged so they don't overlap one another, the lines, or the Now dot.</p>
+<h3 id="the-1-minute-candles-chart">The 1-minute candles chart</h3>
+<p>The same window as 1-minute candles, with its own <strong>Layers</strong> menu. The <strong>Candle pattern</strong> card beside it names any recognized pattern in the latest candles, such as a hammer, an engulfing pattern, a doji or three white soldiers, and says whether it gives this window an edge. Patterns are informational only; they aren't model inputs.</p>
+<h3 id="reversal-risk">Reversal Risk</h3>
+<figure class="shot narrow"><img src="../images/09-reversal-risk.jpg" alt="The reversal risk card"><figcaption>The reversal risk card</figcaption></figure>
+<ul><li><strong>The headline percentage</strong> is the chance that the side currently ahead loses by the close: 0% means a sure thing, and 100% would be a coin flip. It's labeled <strong>Low</strong>, <strong>Moderate</strong> or <strong>High</strong>.</li><li><strong>Chance of flipping, Currently, Cushion:</strong> the flip chance for the side behind, how far the price is from the target, and that distance in units of expected movement (σ).</li><li><strong>Momentum strength:</strong> how strongly the price has moved over the last 3 minutes compared with normal, and whether it's moving with or against the side that's winning.</li><li><strong>Breaks above window high, Breaks below window low:</strong> the chance of a new high or low before the close.</li></ul>
+<p>These odds come from a random-walk model of the 60-second average, calibrated on past windows. Momentum, pullbacks, wicks, RSI and target crossings were all tested as early warnings. None of them added anything beyond these calibrated odds.</p>
+</section>
+<section class="chapter" id="4-trade-recommendations">
+<div class="chapter-head"><span class="num">04</span><h2>Trade recommendations</h2></div>
+<figure class="shot narrow"><img src="../images/08-strategy.jpg" alt="The Strategy card"><figcaption>The Strategy card</figcaption></figure>
+<p>The <strong>Strategy</strong> card on the right of the dashboard turns the call and Kalshi's prices into a suggestion. It never trades for you.</p>
+<h3 id="trading-styles">Trading styles</h3>
+<p>Choose <strong>Conservative</strong>, <strong>Neutral</strong> or <strong>Aggressive</strong> at the top of the card:</p>
+<table>
+<thead><tr>
+<th>Setting</th>
+<th>Conservative</th>
+<th>Neutral</th>
+<th>Aggressive</th>
+</tr></thead><tbody>
+<tr>
+<td>Minimum edge to enter (per contract, after fees)</td>
+<td>8¢</td>
+<td>5¢</td>
+<td>3¢</td>
+</tr>
+<tr>
+<td>Contract prices it will suggest</td>
+<td>25¢–75¢</td>
+<td>10¢–90¢</td>
+<td>1¢–99¢</td>
+</tr>
+<tr>
+<td>No new entries with less than</td>
+<td>5 min left</td>
+<td>2 min left</td>
+<td>1 min left</td>
+</tr>
+<tr>
+<td>Exit when the side's chance of losing reaches</td>
+<td>25%</td>
+<td>35%</td>
+<td>50%</td>
+</tr>
+<tr>
+<td>Default stop-loss (share of the price paid)</td>
+<td>30%</td>
+<td>50%</td>
+<td>70%</td>
+</tr>
+<tr>
+<td>Take-profit (share of the most it could sell for)</td>
+<td>60%</td>
+<td>80%</td>
+<td>95%</td>
+</tr>
+<tr>
+<td>Trailing stop keeps at least this share of the best gain</td>
+<td>60%</td>
+<td>50%</td>
+<td>30%</td>
+</tr>
+</tbody></table>
+<h3 id="the-recommendation">The recommendation</h3>
+<p>The headline is one of:</p>
+<ul><li><strong>Buy Yes</strong> or <strong>Buy No</strong>, when the side called is cheap enough compared with the bot's fair value to clear the style's edge, after the fee and half the spread. Entries are suggested only on the side the bot called.</li><li><strong>Stand aside — no edge</strong>, when the price is close to fair value. This is the usual case when the bot follows Kalshi's odds.</li><li><strong>Stand aside — against the call</strong>, when the only edge would be on the side the bot didn't call.</li></ul>
+<p>Underneath, the card shows the bot's fair value, Kalshi's Yes bid and ask, and the edge on each side.</p>
+<h3 id="call-settings">Call settings</h3>
+<table>
+<thead><tr>
+<th>Setting</th>
+<th>Choices</th>
+<th>What it does</th>
+</tr></thead><tbody>
+<tr>
+<td>Call at</td>
+<td>+3 to +12 min</td>
+<td>When each window's call locks. The menu shows how often calls at that minute were right in history. Later calls are right more often, but Kalshi's price has moved too. Changing it rebuilds the model's history at the new time.</td>
+</tr>
+<tr>
+<td>Calls</td>
+<td>All calls, or only ≥60%, 65%, 70%, 75% or 80% confident</td>
+<td>Calls below the threshold are marked <strong>No call</strong> and left out of accuracy and performance. Every window is still logged and trained on.</td>
+</tr>
+<tr>
+<td>Stop-loss</td>
+<td>Style default, or Custom: 5%–70%</td>
+<td>The share of the price paid that you're willing to lose before exiting.</td>
+</tr>
+<tr>
+<td>Take profit</td>
+<td>Style default, or Custom: 5%–100%</td>
+<td>The gain on the price paid at which to sell. If the gain isn't possible at the current price, the card says it's unreachable and no line is drawn.</td>
+</tr>
+<tr>
+<td>Use Kalshi odds</td>
+<td>On or off</td>
+<td>When on, the model starts from Kalshi's price and adjusts it only with signals that have proven themselves. <strong>Leave this on.</strong> With it off, the model uses price signals alone, which is much less accurate and can disagree with the market for no good reason.</td>
+</tr>
+</tbody></table>
+<h3 id="your-position">Your position</h3>
+<p>Enter your <strong>Stake</strong> per window. Once a call is locked, the card shows:</p>
+<ul><li>how many whole contracts the stake buys on the called side, at the ask, and what they cost,</li><li><strong>If sold now:</strong> the result of selling at the bid, after the fee,</li><li><strong>If it settles Up / Down:</strong> the result at settlement either way,</li><li><strong>Expected at settlement:</strong> the average of the two, weighted by the bot's probability,</li><li><strong>At stop-loss</strong> and <strong>At take profit:</strong> the result if you exit at those lines.</li></ul>
+<h3 id="stop-loss-and-take-profit-lines">Stop-loss and take-profit lines</h3>
+<p>Both lines are drawn on the 60-second average chart, in Bitcoin prices, so you can see how far the price has to move to reach them. They're based on the current market: the time left, volatility, and how far Kalshi's price has strayed from the bot's odds.</p>
+<ul><li><strong>Stop-loss</strong> limits your loss if the call is going wrong. After you've been in profit by at least 10¢ (or a quarter of the best gain), it becomes a <strong>trailing stop</strong>, which keeps at least the style's share of the best gain so far.</li><li><strong>Take profit</strong> locks in a gain when the call is going right.</li></ul>
+<h3 id="entry-and-exit-alerts">Entry and exit alerts</h3>
+<p>The <strong>Entry &amp; exit alerts</strong> list shows each suggestion as it happens, with the time and the reason. For example: "If holding Yes: exit at 14¢. From the current price, Yes now loses 86% of the time…". Alerts that no longer apply are marked <strong>No longer active</strong>.</p>
+</section>
+<section class="chapter" id="5-indicators">
+<div class="chapter-head"><span class="num">05</span><h2>Indicators</h2></div>
+<figure class="shot wide"><img src="../images/02-indicators.jpg" alt="The Indicators tab"><figcaption>The Indicators tab</figcaption></figure>
+<p>The <strong>Indicators</strong> tab shows every signal the bot computes, each on its own card:</p>
+<ul><li><strong>At call / Now:</strong> the value when the call locked, and the value now.</li><li><strong>Weight:</strong> the signal's weight in the model. <strong>Not used</strong> means it isn't a model input.</li><li><strong>Favors Up / Favors Down:</strong> the direction the signal points.</li><li><strong>Reading now:</strong> what the value means in plain language.</li><li><strong>Effect on prediction:</strong> whether it's moving the call and why.</li></ul>
+<h3 id="model-inputs">Model inputs</h3>
+<p><strong>Spot vs. target</strong>, <strong>5m momentum</strong>, <strong>RSI(14)</strong> and <strong>Kalshi implied odds</strong> are the only signals that can move the call. Each starts at zero weight and earns weight only by improving predictions on held-out windows. Kalshi's implied odds are the anchor: the call starts from Kalshi's price, and the others can shift it only once they've proven themselves.</p>
+<h3 id="context-only">Context only</h3>
+<p><strong>Last-60s tick momentum</strong>, <strong>15m momentum</strong>, <strong>EMA 9/21 trend</strong>, <strong>Bollinger %B</strong>, <strong>Stochastic %K</strong> and <strong>VWAP(60) deviation</strong> move closely with a model input, so counting them too would count the same information twice. After every retrain, each is re-tested on held-out windows; three significant wins in a row would promote it into the model. Tick momentum exists only in live windows, so it's tested on those alone, once 500 are available.</p>
+<h3 id="what-has-been-tested">What has been tested</h3>
+<p>Held-out tests (fit on older windows, scored on newer ones) found <strong>no signal that predicts these windows beyond Kalshi's own price at the call</strong>. This includes the 15 technical indicators; ADX and ±DI; order-book imbalance; Coinbase taker trade flow; the Deribit perpetual premium and funding rate; and DVOL. Kalshi's price was well calibrated across more than 6,000 windows. Calls at 55–60% won 58% of the time, at 60–65% they won 63%, and at 70–80% they won 77%.</p>
+<p>That's why the bot usually follows Kalshi's odds. If you want a higher hit rate, take only the confident calls, with <strong>Calls</strong> set to ≥60% or higher. Low-confidence calls are close to coin flips, and they're priced that way.</p>
+</section>
+<section class="chapter" id="6-performance">
+<div class="chapter-head"><span class="num">06</span><h2>Performance</h2></div>
+<figure class="shot wide"><img src="../images/03-performance.jpg" alt="The Performance tab"><figcaption>The Performance tab</figcaption></figure>
+<p>The <strong>Performance</strong> tab compares the bot with Kalshi's price over time. All times are Eastern, Kalshi's clock. Green marks periods where the bot's probabilities were closer to the outcomes than Kalshi's; red marks periods where Kalshi's were closer.</p>
+<ul><li><strong>Against Kalshi:</strong> windows, bot accuracy, Kalshi favorite accuracy, and the <strong>Brier edge</strong> per window. That's Kalshi's squared error minus the bot's, in points. Positive means the bot was closer.</li><li><strong>Best times to trade:</strong> days of the week ranked by Brier edge, each with its 4-hour blocks ranked. Days or blocks with fewer than 30 windows are marked "few windows", because a handful of results can change their rank.</li><li><strong>Emerging trends:</strong> patterns forming in recent results, such as calls beating their confidence. Each is marked as an early sign or as confirmed.</li><li><strong>Cumulative edge over Kalshi:</strong> the running total of the per-window edge. Rising means the bot is pulling ahead, falling means it's falling behind, and flat means it's matching Kalshi.</li><li><strong>Hour by hour and Day × hour:</strong> the edge for each hour of the day, and for each hour on each day.</li><li><strong>Day by day, Week by week, Month by month:</strong> tables of every period, with <strong>beyond noise</strong> shown when the difference is bigger than its margin of error.</li></ul>
+<h3 id="hover-for-details">Hover for details</h3>
+<p>Rest the pointer on any bar, heatmap cell, day card, time block or table row. After a moment, a popover opens at the pointer with that period's details: windows, accuracy for the bot and Kalshi, Brier edge with its margin, whether it's beyond the noise, how many windows settled Up, the bot's average confidence, and how often the bot and Kalshi disagreed. On the cumulative edge chart, the popover shows the nearest window's full call breakdown and what that window added to the running edge. Popovers open away from the nearer edge of the screen.</p>
+</section>
+<section class="chapter" id="7-prediction-log">
+<div class="chapter-head"><span class="num">07</span><h2>Prediction Log</h2></div>
+<figure class="shot wide"><img src="../images/04-prediction-log.jpg" alt="The Prediction Log"><figcaption>The Prediction Log</figcaption></figure>
+<p>Every window the bot has followed, newest first:</p>
+<table>
+<thead><tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr></thead><tbody>
+<tr>
+<td>Window</td>
+<td>The window's start time.</td>
+</tr>
+<tr>
+<td>Target</td>
+<td>The window's target price.</td>
+</tr>
+<tr>
+<td>Spot at call</td>
+<td>The bot's BRTI estimate when the call locked.</td>
+</tr>
+<tr>
+<td>P(up)</td>
+<td>The bot's probability of Up.</td>
+</tr>
+<tr>
+<td>Call</td>
+<td>↑ Up or ↓ Down.</td>
+</tr>
+<tr>
+<td>Confidence</td>
+<td>The probability of the side called. Faded when the call is below your Calls threshold.</td>
+</tr>
+<tr>
+<td>Kalshi Yes</td>
+<td>Kalshi's Yes price at the call, with the bid and ask.</td>
+</tr>
+<tr>
+<td>Settled at</td>
+<td>The settlement value.</td>
+</tr>
+<tr>
+<td>Outcome</td>
+<td>↑ Up in green or ↓ Down in red.</td>
+</tr>
+<tr>
+<td>Result</td>
+<td>Correct, Wrong, Live (not settled yet), or No call.</td>
+</tr>
+</tbody></table>
+<p>Rest the pointer on a row to highlight it. After a moment, a popover explains <strong>why the call succeeded or failed</strong>: where the price stood at the call, whether the lead held or reversed, how close the finish was, and which signals moved the call.</p>
+<p><strong>Copy CSV</strong> in the toolbar copies the whole log, including bid and ask, for a spreadsheet.</p>
+</section>
+<section class="chapter" id="8-activity">
+<div class="chapter-head"><span class="num">08</span><h2>Activity</h2></div>
+<figure class="shot wide"><img src="../images/05-activity.jpg" alt="The Activity log"><figcaption>The Activity log</figcaption></figure>
+<p>A timestamped list of what the bot is doing: windows opening, calls locking, settlements, retraining results, history rebuilds and alerts. If something looks wrong, this is the first place to check, and the lines to include in a bug report.</p>
+</section>
+<section class="chapter" id="9-how-the-model-learns">
+<div class="chapter-head"><span class="num">09</span><h2>How the model learns</h2></div>
+<ul><li><strong>Training data.</strong> Every settled window is a training example: the live windows the bot watched, plus past windows rebuilt from Kalshi's history and Coinbase's 1-minute candles (up to 180 days). Recent windows count more than old ones.</li><li><strong>Market-anchored.</strong> The model starts from Kalshi's own odds. Learned weights adjust those odds only when the inputs carry information the price doesn't.</li><li><strong>Held-out check.</strong> After every settlement, the model retrains on the older 80% of windows and is scored on the newest 20%. Learned weights are used only if they beat Kalshi's odds on those unseen windows; otherwise the bot follows Kalshi.</li><li><strong>Promotion trials.</strong> Context-only signals are re-tested after each retrain, and three significant wins in a row would promote one into the model.</li><li><strong>Updates right after the close.</strong> Accuracy updates and the model retrains as soon as Kalshi settles a window, without waiting for the next call.</li></ul>
+</section>
+<section class="chapter" id="10-your-data">
+<div class="chapter-head"><span class="num">10</span><h2>Your data</h2></div>
+<p>All data stays on your Mac, in Kalshi Bot's sandboxed container. Nothing is sent anywhere except the public market-data requests described in <a href="https://github.com/jaldrich2023/KalshiBot/blob/main/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES</a>.</p>
+<p><strong>Reset Model…</strong> in the Model card returns the model to its starting weights and permanently deletes:</p>
+<ul><li>the prediction log and accuracy history,</li><li>the training history,</li><li>the price calibration,</li><li>the call-time statistics,</li><li>the alerts and the activity log.</li></ul>
+<p>Your settings are kept. The model then retrains from scratch on Kalshi's full market history, which takes about a minute. To keep a copy of your log, use <strong>Copy CSV</strong> first.</p>
+</section>
+<section class="chapter" id="11-troubleshooting">
+<div class="chapter-head"><span class="num">11</span><h2>Troubleshooting</h2></div>
+<div class="faq"><p class="q">The Prediction card says "No prediction locked for this window".</p><p>The call locks at the minute set in <strong>Call at</strong> (+3 by default). If the bot was started after that minute, it waits for the next window.</p></div>
+<div class="faq"><p class="q">The bot recommends a side that the market clearly disagrees with.</p><p>Check that <strong>Use Kalshi odds</strong> is on. With it off, the model uses price signals alone and can disagree with the market for no good reason.</p></div>
+<div class="faq"><p class="q">My 55–60% calls keep losing.</p><p>That's expected: a 57% call loses about 43% of the time. Set <strong>Calls</strong> to ≥60% or higher to skip low-confidence windows.</p></div>
+<div class="faq"><p class="q">Fewer than 8 sources are live.</p><p>A source is dropped when its feed goes stale or its price is more than 0.05% away from the others. The composite needs only a few sources, and dropped sources come back on their own.</p></div>
+<div class="faq"><p class="q">The Model card says learned adjustments haven't beaten Kalshi's odds.</p><p>That's the normal state. It means the bot is following Kalshi's price, which no tested signal has beaten.</p></div>
+<div class="faq"><p class="q">The charts say "Collecting 60s of prices…".</p><p>The 60-second average needs a minute of prices after launch or after a gap in the feeds.</p></div>
+<div class="faq"><p class="q">The Model card has said "Rebuilding past windows…" for a long time.</p><p>The history download depends on Kalshi's and Coinbase's public APIs, which can be slow or limit requests. Leave the app running; it retries.</p></div>
+</section>
+<section class="chapter" id="12-legal">
+<div class="chapter-head"><span class="num">12</span><h2>Legal</h2></div>
+<p>Kalshi Bot is licensed, not sold, under the end user license agreement in <a href="https://github.com/jaldrich2023/KalshiBot/blob/main/LICENSE">LICENSE</a>. Its source code is public to read, but reading it gives you no right to copy, modify or redistribute it.</p>
+<p>Kalshi Bot isn't financial advice. Its predictions are probabilistic and often wrong, and event contracts and digital assets involve a substantial risk of loss.</p>
+<p>Kalshi, CF Benchmarks, BRTI and the exchange names are trademarks of their respective owners. Kalshi Bot's BRTI estimate is an independent approximation, not the official index. I'm The Team, LLC isn't affiliated with, endorsed by or sponsored by any of them.</p>
+</section>
+</div>
+</body>
+</html>

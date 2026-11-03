@@ -7,12 +7,34 @@
 
 import SwiftUI
 import SwiftData
+import AppKit
 
 @main
 struct KalshiBotApp: App {
+    @State private var engine = BotEngine()
+    /// Set by the dashboard once it has measured itself; until then, a sensible default.
+    @AppStorage("dashboardRequiredHeight") private var dashboardHeight: Double = 0
+
+    init() {
+        Self.quitOtherInstances()
+    }
+
+    /// Two copies of the bot would both write the prediction log, settings and model.
+    /// macOS normally prevents a second copy, but builds launched from Xcode don't, so
+    /// any other running copy is asked to quit.
+    private static func quitOtherInstances() {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return }
+        let current = ProcessInfo.processInfo.processIdentifier
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+        where app.processIdentifier != current {
+            app.terminate()
+        }
+    }
+
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            PredictionRecord.self,
+            TrainingExample.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
@@ -26,7 +48,26 @@ struct KalshiBotApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(engine)
+                // Wide enough for the four-column dashboard; tall enough to show all of it.
+                .frame(width: 1819, height: max(dashboardHeight, 1536))
         }
+        .windowResizability(.contentSize)
+        // Always open the dashboard at launch (and from the Dock), never restore a
+        // saved state of "no windows" — the bot keeps running, so it must be visible.
+        .defaultLaunchBehavior(.presented)
+        .restorationBehavior(.disabled)
         .modelContainer(sharedModelContainer)
+        .commands {
+            CommandGroup(replacing: .appInfo) { AboutCommand() }
+        }
+
+        Window("About Kalshi Bot", id: AboutView.windowID) {
+            AboutView()
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .windowBackgroundDragBehavior(.enabled)
+        .restorationBehavior(.disabled)
     }
 }

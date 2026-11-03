@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: User Manual
+    url: https://github.com/jaldrich2023/KalshiBot/blob/main/docs/USER_MANUAL.md
+    about: How every card, chart and setting works.
+  - name: Report a security vulnerability
+    url: https://github.com/jaldrich2023/KalshiBot/security/advisories/new
+    about: Please report security problems privately, not as public issues.

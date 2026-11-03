@@ -1,0 +1,139 @@
+/* Kalshi Bot print and screen styles, shared by the brochure and the user manual. */
+:root {
+  --bg: #070B10;
+  --bg2: #0D141C;
+  --card: rgba(255, 255, 255, 0.045);
+  --line: rgba(255, 255, 255, 0.10);
+  --text: #E9EEF3;
+  --dim: rgba(233, 238, 243, 0.68);
+  --faint: rgba(233, 238, 243, 0.42);
+  --cyan: #5AC8FA;
+  --green: #34C759;
+  --red: #FF5F57;
+  --amber: #FFB340;
+  --sans: system-ui, -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --display: "SF Pro Display", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 10pt/1.5 var(--sans);
+}
+img { max-width: 100%; display: block; }
+a { color: var(--cyan); text-decoration: none; }
+strong { color: #fff; font-weight: 650; }
+code { font: 0.9em var(--mono); background: rgba(255,255,255,.07); padding: 0.05em 0.35em; border-radius: 4px; }
+
+/* Gradients use opaque stops only: WebKit's PDF printer drops alpha inside gradients. */
+.page-glow { display: none; }
+
+/* Brand */
+.brandmark { display: flex; align-items: center; gap: 10px; font: 600 11pt var(--display); letter-spacing: 0.28em; color: var(--dim); }
+.brandmark b { color: #fff; font-weight: 800; }
+.brandmark .mark { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 12px var(--green); }
+.brandmark.big { font-size: 13pt; }
+.app-icon { width: 76px; height: 76px; border-radius: 18px; box-shadow: 0 10px 40px rgba(0,0,0,.6); }
+
+.glass-frame {
+  margin: 0; padding: 5px; border-radius: 13px;
+  background: #151D26; border: 1px solid #2B3743;
+}
+.glass-frame img { border-radius: 9px; }
+
+.eyebrow { font: 700 8pt var(--sans); letter-spacing: 0.22em; text-transform: uppercase; color: var(--cyan); margin: 0 0 6px; }
+.disclaimer {
+  border: 1px solid rgba(255, 179, 64, .35); background: rgba(255, 179, 64, .07);
+  border-radius: 10px; padding: 10px 14px; color: var(--dim); font-size: 8.5pt;
+}
+.disclaimer strong { color: var(--amber); }
+
+/* ---------------- Brochure ---------------- */
+@page brochure { size: Letter; margin: 0; }
+body.brochure { page: brochure; }
+.sheet {
+  width: 8.5in; height: 11in; padding: 0.55in 0.6in; position: relative; overflow: hidden;
+  page-break-after: always; break-after: page;
+  background: linear-gradient(165deg, #0C2A3A 0%, #070B10 38%, #070B10 72%, #0A2216 100%);
+}
+.sheet:last-child { page-break-after: auto; break-after: auto; }
+.hero-head { display: flex; align-items: center; justify-content: space-between; }
+.hero-title { font: 800 40pt/1.02 var(--display); letter-spacing: -0.02em; margin: 26px 0 10px; }
+.hero-title .accent { color: var(--cyan); }
+.hero-sub { font-size: 12pt; color: var(--dim); max-width: 6.6in; margin: 0 0 18px; }
+.hero-shot { margin: 0 0 18px; }
+.hero-shot img { height: 4.55in; width: 100%; object-fit: cover; object-position: top left; }
+.pillars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.pillar { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.pillar h3 { font: 700 11pt var(--display); margin: 0 0 4px; }
+.pillar p { margin: 0; color: var(--dim); font-size: 8.3pt; line-height: 1.42; }
+.pillar .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
+.foot { position: absolute; left: 0.6in; right: 0.6in; bottom: 0.38in; display: flex; justify-content: space-between; color: var(--faint); font-size: 7.5pt; letter-spacing: .04em; }
+
+.sec-title { font: 800 19pt/1.1 var(--display); margin: 0 0 12px; letter-spacing: -0.01em; }
+.features { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; }
+.feature figure img { height: 1.32in; width: 100%; object-fit: cover; object-position: top left; }
+.feature { display: flex; flex-direction: column; gap: 8px; }
+.feature figure { margin: 0; }
+.feature h3 { font: 700 10.5pt var(--display); margin: 2px 0 0; }
+.feature p { margin: 0; color: var(--dim); font-size: 8.3pt; line-height: 1.42; }
+.honest { display: grid; grid-template-columns: 1.15fr 1fr; gap: 18px; margin-top: 14px; align-items: start; }
+.panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.panel h3 { font: 700 11pt var(--display); margin: 0 0 6px; }
+.panel p { margin: 0 0 6px; color: var(--dim); font-size: 8.3pt; line-height: 1.42; }
+.panel ul { margin: 0; padding-left: 16px; color: var(--dim); font-size: 8.3pt; line-height: 1.38; }
+.panel li { margin: 2px 0; }
+.calib { width: 100%; border-collapse: collapse; font-size: 8.3pt; margin-top: 2px; }
+.calib th { text-align: left; color: var(--faint); font-weight: 600; padding: 3px 0; border-bottom: 1px solid var(--line); }
+.calib td { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,.05); font-variant-numeric: tabular-nums; }
+.calib .bar { height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--cyan), var(--green)); }
+
+/* ---------------- Manual ---------------- */
+body.manual { font-size: 10pt; }
+.cover-page {
+  height: 11in; padding: 0.8in; page-break-after: always; break-after: page; position: relative;
+  background: linear-gradient(165deg, #0C2A3A 0%, #070B10 38%, #070B10 72%, #0A2216 100%);
+}
+.cover-top { display: flex; align-items: center; gap: 18px; }
+.cover-title { font: 800 48pt/1 var(--display); margin: 0.4in 0 10px; letter-spacing: -0.02em; }
+.cover-tag { font-size: 14pt; color: var(--dim); margin: 0 0 6px; }
+.cover-meta { color: var(--faint); font-size: 9pt; margin: 0 0 26px; }
+.cover-shot { margin: 0 0 18px; }
+.cover-shot img { height: 4.6in; width: 100%; object-fit: cover; object-position: top left; }
+.cover-lede { color: var(--dim); font-size: 10.5pt; max-width: 6.4in; }
+.cover-foot { position: absolute; bottom: 0.6in; left: 0.8in; color: var(--faint); font-size: 8pt; }
+
+.flow { padding: 0.65in 0.8in 0.2in; }
+.toc-page { page-break-after: always; break-after: page; }
+.toc { list-style: none; padding: 0; margin: 0; }
+.toc li { padding: 9px 0; border-bottom: 1px solid var(--line); }
+.toc li > a { display: flex; gap: 14px; align-items: baseline; color: var(--text); font: 650 12pt var(--display); }
+.toc .num { color: var(--cyan); font: 700 10pt var(--mono); width: 26px; }
+.toc .subs { display: block; margin: 3px 0 0 40px; font-size: 8.5pt; color: var(--faint); }
+.toc .subs a { color: var(--dim); }
+
+.chapter { page-break-before: always; break-before: page; }
+.chapter-head { display: flex; align-items: baseline; gap: 14px; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 14px; }
+.chapter-head .num { font: 800 24pt var(--display); color: var(--cyan); }
+.chapter-head h2 { font: 800 22pt var(--display); margin: 0; letter-spacing: -0.01em; }
+.manual h3 { font: 700 13pt var(--display); margin: 20px 0 6px; color: #fff; break-after: avoid; }
+.manual h4 { font: 700 10.5pt var(--display); margin: 14px 0 4px; break-after: avoid; }
+.manual p { margin: 0 0 9px; color: var(--dim); }
+.manual ul, .manual ol { margin: 0 0 10px; padding-left: 20px; color: var(--dim); }
+.manual li { margin: 3px 0; }
+.manual table { width: 100%; border-collapse: collapse; margin: 6px 0 14px; font-size: 8.8pt; break-inside: avoid; }
+.manual th { text-align: left; color: var(--text); font-weight: 650; background: rgba(255,255,255,.06); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.manual td { padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,.06); color: var(--dim); vertical-align: top; }
+.manual .callout { border-left: 3px solid var(--amber); background: rgba(255,179,64,.07); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 6px 0 14px; }
+.manual .callout p { margin: 0; }
+.shot { margin: 10px 0 16px; break-inside: avoid; }
+.shot img { border-radius: 10px; box-shadow: 0 12px 34px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.08); }
+.shot.narrow img { max-width: 2.6in; }
+.shot.medium img { max-width: 4.6in; }
+.shot figcaption { color: var(--faint); font-size: 8pt; margin-top: 6px; }
+.faq { margin: 0 0 12px; break-inside: avoid; }
+.faq .q { color: #fff; font-weight: 650; margin-bottom: 2px; }
