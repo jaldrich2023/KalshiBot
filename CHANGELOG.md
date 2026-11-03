@@ -5,6 +5,15 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.15.1] — 2026-11-02 · Build 29
+
+### Changed
+- The license's third-party data section (in the app's About window and in `LICENSE`)
+  now lists all ten data sources: Kalshi, Coinbase, Kraken, Bitstamp, Gemini, Crypto.com,
+  Binance.US, Deribit, OKX and KuCoin.
+- README, SECURITY, CONTRIBUTING, the bug-report form, the manual and the brochure
+  updated for 2.15.
+
 ## [2.15.0] — 2026-11-02 · Build 28
 
 ### Added

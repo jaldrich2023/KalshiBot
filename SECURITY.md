@@ -11,7 +11,7 @@ Report them privately using GitHub's private vulnerability reporting:
 3. Include:
    - what the problem is and what someone could do with it,
    - the steps to reproduce it,
-   - the version of Kalshi Bot (**Kalshi Bot › About Kalshi Bot**, for example "Version 2.14.2 · Build 27") and of macOS.
+   - the version of Kalshi Bot (**Kalshi Bot › About Kalshi Bot**, for example "Version 2.15.1 · Build 29") and of macOS.
 
 You'll get an acknowledgement as soon as possible, followed by updates as the issue is investigated and fixed. Please give a reasonable amount of time for a fix before you disclose anything publicly.
 
@@ -19,7 +19,7 @@ You'll get an acknowledgement as soon as possible, followed by updates as the is
 
 | Version | Supported |
 | --- | --- |
-| 2.14.x (latest) | Yes |
+| 2.15.x (latest) | Yes |
 | Earlier | No — update to the latest version |
 
 ## Scope

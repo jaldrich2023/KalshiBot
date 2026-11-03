@@ -1,4 +1,5 @@
-// TEMPORARY: does Kalshi's own trading activity predict outcomes beyond its price? Delete after use.
+// Research test, run on demand (disabled by default): does Kalshi's own trading activity
+// predict outcomes beyond its price? It downloads several days of Kalshi trades, so it's slow.
 import Foundation
 import Testing
 @testable import KalshiBot
