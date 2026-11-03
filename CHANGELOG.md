@@ -21,6 +21,9 @@ build setting; the build number is `CURRENT_PROJECT_VERSION`.
   every settled window.
 - The model now records its walk-forward log-loss (learned vs. Kalshi's odds), the
   measure behind the "overall" condition.
+- **Downloadable app** on the release page (`KalshiBot-2.21.0-macOS.zip`, Apple silicon,
+  ad-hoc signed — not Developer ID signed or notarized), with install instructions in
+  `docs/INSTALL.md`.
 
 ## [2.20.0] — 2026-11-03 · Build 38
 

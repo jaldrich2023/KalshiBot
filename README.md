@@ -56,6 +56,12 @@ Every signal is held to the same standard: it has to improve predictions on wind
 - Xcode 27.2 or later to build from source
 - An internet connection. Kalshi Bot reads public market data and needs **no account and no API keys**. It never places orders.
 
+## Installing the app
+
+Each [release](https://github.com/jaldrich2023/KalshiBot/releases) includes a ready-to-run copy, `KalshiBot-<version>-macOS.zip`, for Apple silicon Macs on macOS 27.2 or later.
+
+> **Not a signed developer build.** The download is only ad-hoc signed: it isn't signed with an Apple Developer ID or notarized by Apple, so macOS blocks it the first time. Approve it once in **System Settings › Privacy & Security › Open Anyway**. Step-by-step instructions, including a Terminal alternative and how to verify the download's checksum, are in **[docs/INSTALL.md](docs/INSTALL.md)**.
+
 ## Building
 
 1. Clone the repository and open `KalshiBot.xcodeproj` in Xcode.
@@ -79,6 +85,7 @@ Run the tests with **Product › Test** (⌘U). The suite uses Swift Testing. On
 
 - [User Manual](docs/USER_MANUAL.md) ([PDF](docs/Kalshi-Bot-User-Manual.pdf))
 - [Brochure](docs/Kalshi-Bot-Brochure.pdf)
+- [Installing the app](docs/INSTALL.md)
 - [Known issues](docs/KNOWN_ISSUES.md)
 - [Changelog](CHANGELOG.md)
 - [Releases](https://github.com/jaldrich2023/KalshiBot/releases)
