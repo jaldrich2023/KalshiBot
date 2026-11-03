@@ -84,7 +84,7 @@ To rebuild the PDFs after editing the docs, run `docs/tools/make_pdfs.sh`. It re
 
 ## Contributing and security
 
-Kalshi Bot is proprietary software whose source is public to read. Bug reports and feature requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Please report security problems privately, as described in [SECURITY.md](SECURITY.md).
+Kalshi Bot is proprietary software whose source is public to read. Bug reports and feature requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Please report security problems privately, as described in [SECURITY.md](SECURITY.md). Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 

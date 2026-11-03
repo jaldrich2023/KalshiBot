@@ -14,6 +14,8 @@ Kalshi Bot is **proprietary software** (see [LICENSE](LICENSE)). The source code
 
 **Security vulnerabilities** must not be reported in public issues. Follow [SECURITY.md](SECURITY.md) instead.
 
+Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
+
 ## How to write a good bug report
 
 Before you report, search the [existing issues](https://github.com/jaldrich2023/KalshiBot/issues) and [Known issues](docs/KNOWN_ISSUES.md). Your problem may already be known.
