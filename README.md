@@ -15,7 +15,7 @@ A macOS app that calls every Kalshi 15-minute Bitcoin Up/Down window, shows the 
 <a href="https://github.com/jaldrich2023/KalshiBot/releases">Releases</a>
 </p>
 
-<p align="center"><b>Current version: 2.15.1 (Build 29)</b> · macOS 27.2 or later</p>
+<p align="center"><b>Current version: 2.17.1 (Build 33)</b> · macOS 27.2 or later</p>
 
 ![The dashboard during a live window](docs/images/01-dashboard.jpg)
 
@@ -27,10 +27,10 @@ Kalshi's **KXBTC15M** markets ask one question every 15 minutes: will Bitcoin's 
 
 - **Calls each window.** It makes a call (Up or Down, with a probability) at a minute you choose, from +3 to +12 minutes after the open. The call is locked and logged, then scored when Kalshi settles it.
 - **Shows the live picture.** It builds its own BRTI estimate from ten exchange feeds, each corrected by its measured offset from the official index, and shows the typical tracking error. It also shows Kalshi's live Yes/No prices, and draws the 60-second average on a chart. The chart also marks the target, the window's actual high and low, a projected close, and your stop-loss and take-profit levels.
-- **Estimates the risk of a reversal.** It gives the calibrated chance that the side now ahead loses, how strong the momentum is, and how likely the price is to break the window's high or low.
+- **Estimates the risk of a reversal.** It gives the calibrated chance that the side now ahead loses (shown next to Kalshi's own figure), how strong the momentum is, and how likely the price is to break the window's high or low. The corrections refit from history, and a live check shows how often its figures came true.
 - **Recommends trades for your style.** Conservative, Neutral and Aggressive set the required edge, the price range, the entry cutoff and the exits. It suggests entries only on the side it called. You can set your own stop-loss and take-profit percentages, and a stake for profit and loss estimates.
 - **Keeps score honestly.** It reports accuracy with margins of error, Brier scores, and paired comparisons with Kalshi's favorite on the same windows. It shows how many correct calls it needs to reach 70%. Results are broken down by day, hour, week and month.
-- **Trains itself and checks its work.** It learns from up to 180 days of public Kalshi and Coinbase history, saved on disk so later launches fetch only what's new, plus every live window. Learned weights are used only when they beat Kalshi's own odds on windows they weren't trained on. The other indicators are re-tested after every window and promoted only after three significant wins in a row.
+- **Trains itself and checks its work.** It learns from up to 180 days of public Kalshi and Coinbase history, saved on disk so later launches fetch only what's new, plus every live window. Learned weights are used only when they beat Kalshi's own odds in most of four walk-forward blocks of windows they weren't trained on. The other indicators are re-tested after every window and promoted only after significant wins on three separate sets of fresh windows, with the bar raised for testing several signals at once.
 - **Runs unattended.** It keeps the Mac awake while it runs (optional), reconnects dropped or silent price streams on its own, and can reset just the model or clear everything after copying the log.
 
 ### What to expect

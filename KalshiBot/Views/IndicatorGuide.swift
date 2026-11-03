@@ -179,8 +179,11 @@ enum IndicatorEffect {
         }
         let gain = (trial.gain * 1000).formatted(.number.precision(.fractionLength(2)).sign(strategy: .always()))
         let margin = (trial.margin * 1000).formatted(.number.precision(.fractionLength(2)))
-        let verdict = trial.isSignificantGain ? "a significant gain — counting toward promotion" : "no significant gain"
-        return "Latest trial\(trial.liveOnly == true ? " (live windows only)" : ""): \(gain) ± \(margin) milli-log-loss on \(trial.windows) held-out windows, \(verdict)."
+        let verdict = trial.isSignificantGain ? "a significant gain" : "no significant gain"
+        let counting = trial.counted == true
+            ? (trial.isSignificantGain ? " It counts toward promotion." : " It counts against promotion.")
+            : " Only windows that settle after the last counted result can count; \(ModelTrainer.freshWindowsPerTrial) are needed."
+        return "Latest trial\(trial.liveOnly == true ? " (live windows only)" : ""): \(gain) ± \(margin) milli-log-loss on \(trial.windows) held-out windows, \(verdict) (margin widened for testing several signals).\(counting)"
     }
 
     /// The longest description `describe` can produce for this indicator — used to reserve space.
@@ -189,7 +192,7 @@ enum IndicatorEffect {
         learned.usesLearnedWeights = true
         learned.weights[key.rawValue] = -8.88
         var trialled = PredictionModel.starting(excluding: [])
-        trialled.trials[key.rawValue] = TrialResult(gain: -0.00888, margin: 0.00888, coverage: 0.88, windows: 8888)
+        trialled.trials[key.rawValue] = TrialResult(gain: -0.00888, margin: 0.00888, coverage: 0.88, windows: 8888, counted: false)
         let candidates = [
             describe(key, model: trialled, excluded: [], probabilityUp: 0.5, contribution: 0, kalshiYes: 0.88),
             describe(key, model: .starting(excluding: []), excluded: [], probabilityUp: 0.5, contribution: 0, kalshiYes: 0.88),

@@ -11,41 +11,22 @@ struct ReversalRiskCard: View {
     @Environment(BotEngine.self) private var engine
     let market: KalshiMarket
 
-    private var assessment: ReversalRisk? {
-        guard let strike = market.floorStrike, let price = engine.spot,
-              let volatility = engine.volatilityPerRootSecond else { return nil }
-        let samples = engine.ticks.map { (time: $0.time, price: $0.price) }
-        // Prices already inside the settlement minute, once it has begun.
-        let settlementStart = market.closeTime.addingTimeInterval(-60)
-        let settling = samples.filter { $0.time >= settlementStart && $0.time < market.closeTime }.map(\.price)
-        let extremes = WindowChart.extremes(engine.windowPrices(for: market), from: market.openTime, to: market.closeTime)
-
-        return ReversalRisk.assess(.init(
-            price: price,
-            strike: strike,
-            secondsRemaining: market.closeTime.timeIntervalSinceNow,
-            volatility: volatility,
-            settlementAverageSoFar: settling.isEmpty ? nil : settling.reduce(0, +) / Double(settling.count),
-            windowHigh: extremes?.high.price,
-            windowLow: extremes?.low.price,
-            // The sample closest to 3 minutes ago (within a few seconds).
-            priceEarlier: samples.last(where: { Date.now.timeIntervalSince($0.time) >= 180 })
-                .flatMap { Date.now.timeIntervalSince($0.time) <= 185 ? $0.price : nil }
-        ))
-    }
+    private var assessment: ReversalRisk? { engine.reversalRisk(for: market) }
 
     var body: some View {
         Panel(title: "Reversal Risk", systemImage: "arrow.triangle.2.circlepath") {
             VStack(alignment: .leading, spacing: 10) {
                 if let risk = assessment {
-                    content(risk)
+                    content(risk, bands: engine.riskLog.bands, calibration: engine.riskCalibration)
                 } else {
                     Text("Collecting prices…")
                         .foregroundStyle(.secondary)
                 }
             }
             .reservingSpace {
-                VStack(alignment: .leading, spacing: 10) { content(Self.layoutTemplate) }
+                VStack(alignment: .leading, spacing: 10) {
+                    content(Self.layoutTemplate, bands: Self.bandTemplate, calibration: Self.calibrationTemplate)
+                }
             }
         }
         .font(.callout)
@@ -54,6 +35,7 @@ struct ReversalRiskCard: View {
     /// Every factor present with its longest wording — the card's largest layout.
     private static let layoutTemplate = ReversalRisk(
         currentlyUp: true, cushion: 88_888.88, cushionSigma: 8.8, flipProbability: 0.488,
+        kalshiFlipProbability: 0.488, blendsKalshi: true,
         breakoutUpProbability: 0.888, breakoutDownProbability: 0.888,
         momentum: .init(strength: 0.888, up: true, withLeader: false, change: 888.88, seconds: 180),
         factors: [
@@ -61,12 +43,20 @@ struct ReversalRiskCard: View {
             .init(title: "Close to the target", detail: "The cushion is under half of the price movement still expected before the close.", raisesRisk: true),
         ])
 
+    private static let bandTemplate = ["Under 15%", "15–35%", "35% or more"].map {
+        RiskLog.Band(label: $0, count: 8888, said: 0.888, happened: 0.888)
+    }
+    private static let calibrationTemplate = RiskCalibration(
+        flip: [0, 1], blend: [0, 1, 1], breakout: nil, volatilityHalfLife: 88,
+        evaluation: .init(), windows: 88_888, fittedAt: .now)
+
     @ViewBuilder
-    private func content(_ risk: ReversalRisk) -> some View {
+    private func content(_ risk: ReversalRisk, bands: [RiskLog.Band], calibration: RiskCalibration?) -> some View {
         let color = color(for: risk.level)
+        let leader = risk.currentlyUp ? "Up" : "Down"
 
         HStack(alignment: .firstTextBaseline) {
-            Text(BotEngine.percent(risk.riskScore))
+            Text(BotEngine.percent(risk.flipProbability))
                 .heroNumber()
             Spacer()
             // Status color always ships with an icon and a label.
@@ -75,18 +65,22 @@ struct ReversalRiskCard: View {
                 .foregroundStyle(color)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Reversal risk \(BotEngine.percent(risk.riskScore)), \(risk.level.title)")
-        .help("0% = current side effectively locked in · 100% = sitting on the target, a coin flip")
+        .accessibilityLabel("Chance \(leader) loses: \(BotEngine.percent(risk.flipProbability)), \(risk.level.title)")
+        .help("The chance that the side ahead now (\(leader)) loses at settlement. Low under 15%, Moderate under 35%, High from 35%.")
+        Text("Chance \(leader), ahead now, loses by the close")
+            .font(.caption)
+            .foregroundStyle(.secondary)
 
-        Gauge(value: risk.riskScore) { EmptyView() }
+        // 50% is the most a reversal can be: the price sitting on the target.
+        Gauge(value: min(risk.flipProbability / 0.5, 1)) { EmptyView() }
             .gaugeStyle(.linearCapacity)
             .tint(color)
             .accessibilityHidden(true)
 
         HStack {
-            Text("0%")
+            Text("0% · locked in")
             Spacer()
-            Text("Coin flip · 100%")
+            Text("Coin flip · 50%")
         }
         .font(.caption2)
         .foregroundStyle(.tertiary)
@@ -94,8 +88,11 @@ struct ReversalRiskCard: View {
 
         Divider().opacity(0.5)
 
-        LabeledContent("Chance of flipping \(risk.currentlyUp ? "to Down" : "to Up")") {
-            Text(BotEngine.percent(risk.flipProbability)).monospacedDigit()
+        if let kalshi = risk.kalshiFlipProbability {
+            LabeledContent("Kalshi's price says") {
+                Text(BotEngine.percent(kalshi)).monospacedDigit()
+            }
+            .help("The same outcome priced by Kalshi: 1 − the price of \(leader). \(risk.blendsKalshi ? "Blended into the figure above, as the history showed improves it." : "Shown for comparison; blending it in didn't improve on held-out windows.")")
         }
         LabeledContent("Currently") {
             Text("\(risk.currentlyUp ? "Up" : "Down") by \(BotEngine.usd(risk.cushion))")
@@ -149,11 +146,35 @@ struct ReversalRiskCard: View {
             }
         }
 
+        if !bands.isEmpty {
+            Divider().opacity(0.5)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Live check: said → happened").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(bands) { band in
+                    LabeledContent(band.label) {
+                        Text("\(BotEngine.percent(band.said)) → \(BotEngine.percent(band.happened)) (\(band.count))")
+                            .monospacedDigit()
+                    }
+                    .font(.caption)
+                }
+            }
+            .help("Every minute the card's figure is logged and, once the window settles, scored. Close agreement between said and happened means the card is well calibrated; small counts are noisy.")
+        }
+
         Spacer(minLength: 0)
-        Text("From the current price, time left and volatility, calibrated on 30 days of windows. Momentum and chart patterns were tested and added nothing.")
+        Text(footnote(calibration))
             .font(.caption2)
             .foregroundStyle(.tertiary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func footnote(_ calibration: RiskCalibration?) -> String {
+        guard let calibration else {
+            return "From the current price, time left, volatility and the price's tracking error, with corrections fitted on 30 days of windows. Refits from the saved history once it's downloaded."
+        }
+        let weighting = calibration.volatilityHalfLife.map { "volatility weighted toward recent minutes (\(Int($0))-min half-life)" } ?? "volatility over the last hour"
+        let blend = calibration.blend != nil ? ", blended with Kalshi's price" : ""
+        return "From the current price, time left, \(weighting) and the price's tracking error\(blend). Refitted on \(calibration.windows) windows \(calibration.fittedAt.formatted(.relative(presentation: .named))) and kept only where it beat the fixed corrections on the newest windows."
     }
 
     /// Momentum strength: percent, direction, and whether it's with or against the leader.

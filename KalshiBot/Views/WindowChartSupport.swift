@@ -143,7 +143,7 @@ struct WindowExtremeMarks: ChartContent {
 /// A value tag on a window chart at a price level: against the left or right edge, or
 /// centered across the chart just above or below its line. Tags in the same column are
 /// spaced so they never overlap (see `ChartTag.layout`).
-struct ChartTag: Identifiable {
+nonisolated struct ChartTag: Identifiable {
     enum Side { case leading, center, trailing }
 
     let id: String
@@ -326,12 +326,14 @@ enum WindowChart {
     }
 
     /// Breakout chances for the window's high and low from the current price.
-    static func breakouts(_ extremes: Extremes?, price: Double?, volatility: Double?, market: KalshiMarket)
-        -> (up: Double?, down: Double?) {
+    static func breakouts(_ extremes: Extremes?, price: Double?, volatility: Double?, market: KalshiMarket,
+                          calibration: RiskCalibration? = nil) -> (up: Double?, down: Double?) {
         guard let extremes, let price, let volatility else { return (nil, nil) }
         let remaining = market.closeTime.timeIntervalSinceNow
-        return (ReversalRisk.breakoutProbability(distance: extremes.high.price - price, volatility: volatility, secondsRemaining: remaining),
-                ReversalRisk.breakoutProbability(distance: price - extremes.low.price, volatility: volatility, secondsRemaining: remaining))
+        return (ReversalRisk.breakoutProbability(distance: extremes.high.price - price, volatility: volatility,
+                                                 secondsRemaining: remaining, calibration: calibration),
+                ReversalRisk.breakoutProbability(distance: price - extremes.low.price, volatility: volatility,
+                                                 secondsRemaining: remaining, calibration: calibration))
     }
 
     /// The highest and lowest prices actually reached inside the window (from

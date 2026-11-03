@@ -1,6 +1,6 @@
 # Known issues and limitations
 
-These are known, documented limitations of Kalshi Bot 2.15.1. They aren't treated as bugs.
+These are known, documented limitations of Kalshi Bot 2.17.1. They aren't treated as bugs.
 
 ## Predictions
 
@@ -13,6 +13,8 @@ These are known, documented limitations of Kalshi Bot 2.15.1. They aren't treate
 - **The BRTI estimate isn't the official index.** It's built from ten public exchange feeds, each corrected by its own measured offset from Kalshi's official targets, plus an overall calibration. It still differs from CF Benchmarks' value by a few dollars; the Current Window card shows the typical **Tracking error**. That matters only when a window finishes within about that much of its target.
 - **Sources drop out.** Feeds can go stale or move off-market for a while. The composite drops them and uses the rest; dropped or silent streams reconnect automatically, and the source list shows how long each has been out.
 - **History depends on public APIs.** The first rebuild downloads up to 180 days from Kalshi and Coinbase, retrying slow or failed requests. After that, the download is saved and only new windows are fetched. macOS can clear the saved copy (it's in Caches) to free space, which just means one full download again.
+- **The Reversal Risk card's live check needs time.** It scores the card's figure once a window settles, so its bands are noisy until a few hundred minutes are logged. The refit uses minutes +3 to +12; earlier and in the final minutes, the fixed corrections apply.
+- **Promotions are deliberately slow.** A context signal needs significant gains on three separate sets of at least 200 fresh windows, so even a genuinely useful one takes about a week to be promoted.
 - **Rebuilt windows lack some data.** Windows rebuilt from history have no tick momentum, and no Kalshi odds where Kalshi has no price history.
 
 ## Trading

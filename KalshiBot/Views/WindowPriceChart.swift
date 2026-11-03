@@ -124,7 +124,8 @@ struct WindowPriceChart: View {
     private func tags(points: [PricePoint], trend: [(time: Date, price: Double)], path: [(time: Date, center: Double)],
                       projection: WindowProjection?, extremes: WindowChart.Extremes?) -> [ChartTag] {
         // Breakout odds from the same "Now" price the high and low are measured on.
-        let breakouts = WindowChart.breakouts(extremes, price: points.last?.price, volatility: engine.volatilityPerRootSecond, market: market)
+        let breakouts = WindowChart.breakouts(extremes, price: points.last?.price, volatility: engine.volatilityPerRootSecond, market: market,
+                                              calibration: engine.riskCalibration)
         var tags = WindowChart.referenceTags(market: market, extremes: extremes, breakouts: breakouts, price: points.last?.price)
         if let last = points.last {
             tags.append(ChartTag(id: "price", text: "Now \(BotEngine.usd(last.price))", color: .primary, value: nil, side: .trailing, rank: 1))

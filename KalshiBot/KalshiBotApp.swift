@@ -45,12 +45,20 @@ struct KalshiBotApp: App {
         }
     }()
 
+    /// The usable part of the main screen (below the menu bar, beside the Dock).
+    private var screenFrame: CGRect {
+        NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1819, height: 1536)
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(engine)
-                // Wide enough for the four-column dashboard; tall enough to show all of it.
-                .frame(width: 1819, height: max(dashboardHeight, 1536))
+                // As wide as the dashboard's five columns use well, and tall enough to show
+                // all of it — but never larger than the screen, so nothing runs off it
+                // (anything that still doesn't fit scrolls inside the window).
+                .frame(width: min(2400, screenFrame.width - 40),
+                       height: min(max(dashboardHeight, 900), screenFrame.height))
         }
         .windowResizability(.contentSize)
         // Always open the dashboard at launch (and from the Dock), never restore a

@@ -30,13 +30,22 @@ nonisolated struct TrialResult: Codable, Sendable, Equatable {
     var liveOnly: Bool?
     /// Windows that have the signal, for a live-only trial.
     var liveWindows: Int?
+    /// Whether this result was judged on fresh windows — ones that settled after the
+    /// signal's previous counted result — so it counts toward promotion or demotion.
+    /// Results that reuse already-judged windows are shown but don't count.
+    var counted: Bool?
+    /// Windows in the trial's pool when this counted result was made; the next counted
+    /// result needs `freshWindowsPerTrial` more.
+    var mark: Int?
 
     var hasEnoughData: Bool {
         if liveOnly == true { return (liveWindows ?? 0) >= ModelTrainer.minimumLiveTrialWindows }
         return coverage >= ModelTrainer.minimumTrialCoverage
     }
-    /// Helps by more than its margin of error.
+    /// Helps by more than its margin of error (which is widened for testing several signals).
     var isSignificantGain: Bool { hasEnoughData && gain > margin }
+    /// Counts toward a promotion or demotion streak.
+    var counts: Bool { hasEnoughData && counted == true }
 }
 
 /// Walk-forward check: fit on older windows, score on the newest ones.
@@ -49,6 +58,9 @@ nonisolated struct ModelEvaluation: Codable, Sendable, Equatable {
     var priorBrierScore: Double
     /// Prior-pull strength chosen by tuning.
     var regularization: Double
+    /// Walk-forward blocks scored, and how many the learned weights won (nil before 2.16).
+    var folds: Int?
+    var foldsWon: Int?
 }
 
 nonisolated enum ModelTrainer {
@@ -61,19 +73,29 @@ nonisolated enum ModelTrainer {
     /// Used before there's enough history to tune.
     static let defaultRegularization: Double = 300
 
+    /// Share of the newest windows scored walk-forward, and the blocks it's split into.
+    static let walkForwardShare = 0.4
+    static let walkForwardFolds = 4
+    /// Below this many windows, a single 80/20 split is used instead of blocks.
+    static let minimumForWalkForward = 400
+    /// New settled windows a signal's trial needs before another result counts.
+    static let freshWindowsPerTrial = 200
+
     /// Walk-forward training:
-    /// 1. Split history by time: oldest 80% train, newest 20% holdout.
-    /// 2. Tune the prior-pull strength on the newest quarter of the training slice.
-    /// 3. Score the tuned model and the starting weights on the untouched holdout.
-    /// 4. Trial each context signal on the same holdout (see `trial`).
-    /// 5. Refit on everything — but only deploy the learned weights if they beat the
-    ///    starting weights out of sample. Otherwise keep predicting with the starting
-    ///    weights until more history makes learning pay off.
+    /// 1. Tune the prior-pull strength on the windows before the newest 40%.
+    /// 2. Split the newest 40% into four blocks in time order. For each, fit on every
+    ///    window before it and score the learned and starting weights on the block.
+    /// 3. Deploy learned weights (refitted on everything) only if they won at least
+    ///    three of the four blocks and overall; otherwise keep the starting weights.
+    /// 4. Trial each context signal (see `trial`): a result counts toward promotion only
+    ///    when judged on windows that settled since its last counted result, and its
+    ///    significance bar is raised for testing several signals at once.
     ///
     /// A market-anchored model only learns from windows where Kalshi's odds are known;
     /// a window without them would look like "the market said 50/50" and skew the fit.
     static func train(_ samples: [TrainingSample], excluding excluded: Set<FeatureKey>,
-                      promoted: Set<FeatureKey> = [], now: Date = .now) -> PredictionModel {
+                      promoted: Set<FeatureKey> = [], lastTrialMarks: [String: Int] = [:],
+                      now: Date = .now) -> PredictionModel {
         let starting = PredictionModel.starting(excluding: excluded, promoted: promoted)
         let usable = starting.marketAnchored ? samples.filter { $0.features[.kalshiImplied] != nil } : samples
         let sorted = usable.sorted { $0.time < $1.time }
@@ -85,18 +107,35 @@ nonisolated enum ModelTrainer {
             return model
         }
 
-        let split = Int(Double(sorted.count) * 0.8)
-        let train = Array(sorted[..<split])
-        let holdout = Array(sorted[split...])
-        let lambda = tuneRegularization(train, excluding: excluded, promoted: promoted)
+        // Blocks: four in the newest 40%, or one newest-20% block for a short history.
+        let useBlocks = sorted.count >= minimumForWalkForward
+        let firstTest = Int(Double(sorted.count) * (useBlocks ? 1 - walkForwardShare : 0.8))
+        let folds = useBlocks ? walkForwardFolds : 1
+        let lambda = tuneRegularization(Array(sorted[..<firstTest]), excluding: excluded, promoted: promoted)
 
-        // Recency weighting is anchored at the end of the training slice, so the
-        // holdout is scored exactly as if it were the future.
-        let anchor = train.last?.time ?? now
-        let trained = fit(train, excluding: excluded, promoted: promoted, now: anchor, regularization: lambda)
-        let fitted = score(trained, on: holdout, excluding: excluded)
-        let prior = score(starting, on: holdout, excluding: excluded)
-        let learnedHelps = fitted.logLoss < prior.logLoss
+        var won = 0
+        var learnedScores: [TrainingSample] = []
+        var fittedLoss = 0.0, priorLoss = 0.0, fittedBrier = 0.0, priorBrier = 0.0, fittedRight = 0, priorRight = 0
+        for fold in 0..<folds {
+            let lower = firstTest + (sorted.count - firstTest) * fold / folds
+            let upper = firstTest + (sorted.count - firstTest) * (fold + 1) / folds
+            guard upper > lower else { continue }
+            let before = Array(sorted[..<lower]), block = Array(sorted[lower..<upper])
+            // Recency weighting is anchored at the end of the fitting slice, so each block
+            // is scored exactly as if it were the future.
+            let trained = fit(before, excluding: excluded, promoted: promoted, now: before.last?.time ?? now, regularization: lambda)
+            let fitted = score(trained, on: block, excluding: excluded)
+            let prior = score(starting, on: block, excluding: excluded)
+            if fitted.logLoss < prior.logLoss { won += 1 }
+            let n = Double(block.count)
+            fittedLoss += fitted.logLoss * n; priorLoss += prior.logLoss * n
+            fittedBrier += fitted.brier * n; priorBrier += prior.brier * n
+            fittedRight += Int((fitted.accuracy * n).rounded()); priorRight += Int((prior.accuracy * n).rounded())
+            learnedScores += block
+        }
+        let scored = Double(max(learnedScores.count, 1))
+        // Most blocks, and overall: one lucky block can't switch the model over.
+        let learnedHelps = won >= max(folds - 1, 1) && fittedLoss < priorLoss
 
         // Recency is measured from the newest window, not the wall clock, so history
         // doesn't fade away just because the app wasn't running for a while.
@@ -107,14 +146,15 @@ nonisolated enum ModelTrainer {
         model.trainedAt = now
         model.usesLearnedWeights = learnedHelps
         model.evaluation = ModelEvaluation(
-            holdoutCount: holdout.count,
-            accuracy: fitted.accuracy, brierScore: fitted.brier,
-            priorAccuracy: prior.accuracy, priorBrierScore: prior.brier,
-            regularization: lambda
+            holdoutCount: learnedScores.count,
+            accuracy: Double(fittedRight) / scored, brierScore: fittedBrier / scored,
+            priorAccuracy: Double(priorRight) / scored, priorBrierScore: priorBrier / scored,
+            regularization: lambda, folds: folds, foldsWon: won
         )
-        for key in FeatureKey.promotionCandidates where !excluded.contains(key) {
-            model.trials[key.rawValue] = trial(key, train: train, holdout: holdout, baseline: trained,
-                                               excluding: excluded, promoted: promoted, lambda: lambda, anchor: anchor)
+        let candidates = FeatureKey.promotionCandidates.filter { !excluded.contains($0) }
+        for key in candidates {
+            model.trials[key.rawValue] = trial(key, samples: sorted, excluding: excluded, promoted: promoted, lambda: lambda,
+                                               lastMark: lastTrialMarks[key.rawValue], testedSignals: candidates.count)
         }
         return model
     }
@@ -125,47 +165,77 @@ nonisolated enum ModelTrainer {
     /// on just the windows that have it, once there are this many (~5 days live).
     static let minimumLiveTrialWindows = 500
 
-    /// Tests whether `key` earns its place: refits on the training slice with the signal
-    /// added (or, if already promoted, removed) and compares the two models window by
-    /// window on the holdout. A positive `gain` means the model with the signal predicts
-    /// better; it's significant only if larger than its 95% margin.
-    static func trial(_ key: FeatureKey, train: [TrainingSample], holdout: [TrainingSample], baseline: PredictionModel,
-                      excluding excluded: Set<FeatureKey>, promoted: Set<FeatureKey>, lambda: Double, anchor: Date) -> TrialResult {
-        let coverage = Double(train.count { $0.features[key] != nil }) / Double(max(train.count, 1))
-        let isPromoted = promoted.contains(key)
-        let withKey = isPromoted ? promoted : promoted.union([key])
+    /// z for a two-sided 95% test spread over `count` tests (Bonferroni): 1.96 for one,
+    /// ≈2.64 for six. Testing six signals at 95% each would let one look significant by
+    /// chance about a quarter of the time.
+    static func zScore(forTests count: Int) -> Double {
+        let tail = 0.025 / Double(max(count, 1))
+        var lo = 0.0, hi = 10.0
+        for _ in 0..<60 {
+            let mid = (lo + hi) / 2
+            if 1 - Indicators.normalCDF(mid) > tail { lo = mid } else { hi = mid }
+        }
+        return (lo + hi) / 2
+    }
+
+    /// Tests whether `key` earns its place: fits the model with and without the signal on
+    /// older windows and compares them window by window on newer ones. A positive `gain`
+    /// means the signal helps; it's significant only if larger than its margin, which is
+    /// widened for the number of signals tested.
+    ///
+    /// The judged windows are those that settled since the signal's last counted result
+    /// (`lastMark`), once there are `freshWindowsPerTrial` of them, so each counted result
+    /// is new evidence. Until then the newest 20% is judged for display, and the result
+    /// doesn't count. Sparse signals (live-only ones like tick momentum) are judged only on
+    /// the windows that have them.
+    static func trial(_ key: FeatureKey, samples sorted: [TrainingSample], excluding excluded: Set<FeatureKey>,
+                      promoted: Set<FeatureKey>, lambda: Double, lastMark: Int?, testedSignals: Int) -> TrialResult {
+        let coverage = Double(sorted.count { $0.features[key] != nil }) / Double(max(sorted.count, 1))
+        let withKey = promoted.union([key])
         let withoutKey = promoted.subtracting([key])
 
-        var trialHoldout = holdout
-        let with: PredictionModel, without: PredictionModel
+        var pool = sorted
         var liveOnly: Bool?, liveWindows: Int?
-        if coverage >= minimumTrialCoverage {
-            let alternative = fit(train, excluding: excluded, promoted: isPromoted ? withoutKey : withKey,
-                                  now: anchor, regularization: lambda)
-            (with, without) = isPromoted ? (baseline, alternative) : (alternative, baseline)
-        } else {
-            // Sparse signal: compare both models on only the windows that have it,
-            // oldest 70% to fit, newest 30% to judge.
-            let having = (train + holdout).filter { $0.features[key] != nil }.sorted { $0.time < $1.time }
+        if coverage < minimumTrialCoverage {
+            pool = sorted.filter { $0.features[key] != nil }
             liveOnly = true
-            liveWindows = having.count
-            guard having.count >= minimumLiveTrialWindows else {
-                return TrialResult(gain: 0, margin: 0, coverage: coverage, windows: 0, liveOnly: true, liveWindows: having.count)
+            liveWindows = pool.count
+            guard pool.count >= minimumLiveTrialWindows else {
+                return TrialResult(gain: 0, margin: 0, coverage: coverage, windows: 0, liveOnly: true, liveWindows: pool.count)
             }
-            let split = Int(Double(having.count) * 0.7)
-            let fitSlice = Array(having[..<split])
-            trialHoldout = Array(having[split...])
-            let sliceAnchor = fitSlice.last?.time ?? anchor
-            with = fit(fitSlice, excluding: excluded, promoted: withKey, now: sliceAnchor, regularization: lambda)
-            without = fit(fitSlice, excluding: excluded, promoted: withoutKey, now: sliceAnchor, regularization: lambda)
         }
+
+        // A mark beyond the pool (history rebuilt smaller) starts over.
+        let mark = lastMark.flatMap { $0 <= pool.count ? $0 : nil }
+        let firstSplit = Int(Double(pool.count) * 0.8)
+        let start: Int
+        let counted: Bool
+        if let mark, pool.count - mark >= freshWindowsPerTrial {
+            start = mark
+            counted = true
+        } else if mark == nil, pool.count - firstSplit >= freshWindowsPerTrial {
+            start = firstSplit
+            counted = true
+        } else {
+            start = firstSplit
+            counted = false
+        }
+        let fitSlice = Array(pool[..<start]), judged = Array(pool[start...])
+        guard !fitSlice.isEmpty, !judged.isEmpty else {
+            return TrialResult(gain: 0, margin: 0, coverage: coverage, windows: 0, liveOnly: liveOnly, liveWindows: liveWindows)
+        }
+        let anchor = fitSlice.last?.time ?? .now
+        let with = fit(fitSlice, excluding: excluded, promoted: withKey, now: anchor, regularization: lambda)
+        let without = fit(fitSlice, excluding: excluded, promoted: withoutKey, now: anchor, regularization: lambda)
+
         // Per-window log-loss improvement from having the signal.
-        let diffs = trialHoldout.map { logLoss(without, $0, excluding: excluded) - logLoss(with, $0, excluding: excluded) }
+        let diffs = judged.map { logLoss(without, $0, excluding: excluded) - logLoss(with, $0, excluding: excluded) }
         let n = Double(diffs.count)
         let mean = diffs.reduce(0, +) / n
         let variance = diffs.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / max(n - 1, 1)
-        return TrialResult(gain: mean, margin: 1.96 * (variance / n).squareRoot(), coverage: coverage, windows: diffs.count,
-                           liveOnly: liveOnly, liveWindows: liveWindows)
+        return TrialResult(gain: mean, margin: zScore(forTests: testedSignals) * (variance / n).squareRoot(),
+                           coverage: coverage, windows: diffs.count, liveOnly: liveOnly, liveWindows: liveWindows,
+                           counted: counted, mark: counted ? pool.count : nil)
     }
 
     private static func logLoss(_ model: PredictionModel, _ sample: TrainingSample, excluding excluded: Set<FeatureKey>) -> Double {

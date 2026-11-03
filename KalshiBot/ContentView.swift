@@ -71,6 +71,9 @@ struct ContentView: View {
         }
         .preferredColorScheme(.dark)
         .task {
+            // Unit tests run inside this app; starting the bot there would trade places with
+            // the live app on the same data, and miss or double-log windows.
+            guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
             engine.start(context: modelContext)
         }
     }

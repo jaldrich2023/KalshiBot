@@ -2,7 +2,7 @@
 
 Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.
 
-Version 2.15.1 · macOS 27.2 or later · © 2026 I'm The Team, LLC
+Version 2.17.1 · macOS 27.2 or later · © 2026 I'm The Team, LLC
 
 ![The dashboard during a live window](images/01-dashboard.jpg)
 
@@ -96,7 +96,7 @@ If **Calls** is set to confident calls only (see chapter 4), the card says how m
 
 - **Trained on:** the windows the model learned from. **Live / rebuilt** splits them into windows the bot watched live and windows rebuilt from history.
 - **Predicting with:** **Kalshi market** while learned adjustments haven't beaten Kalshi's own odds, or **Learned weights** once they have.
-- **Holdout test:** the trained model and Kalshi's price, scored on the newest 20% of windows that the training never saw.
+- **Holdout test:** the trained model and Kalshi's price, scored walk-forward on the newest 40% of windows. That stretch is split into four blocks in time order, and each block is scored by a model fitted only on the windows before it. **Learned weights won** shows how many blocks the learned weights beat Kalshi in.
 - **Path to 70% accuracy:** the number of correct calls in a row needed to bring overall accuracy to 70%, or, once it's there, how many misses in a row it can absorb. Each miss on the way adds about 2.3 more needed. The note underneath compares the goal with the calls' average confidence, which is where accuracy tends over time.
 - **Reset Model…** offers two choices: reset only the model, or clear all data. See chapter 10.
 
@@ -122,12 +122,17 @@ The same window as 1-minute candles, with its own **Layers** menu. The **Candle 
 
 ![The reversal risk card](images/09-reversal-risk.jpg)
 
-- **The headline percentage** is the chance that the side currently ahead loses by the close: 0% means a sure thing, and 100% would be a coin flip. It's labeled **Low**, **Moderate** or **High**.
-- **Chance of flipping, Currently, Cushion:** the flip chance for the side behind, how far the price is from the target, and that distance in units of expected movement (σ).
+- **The headline percentage** is the chance that the side ahead now loses by the close. It's labeled **Low** (under 15%), **Moderate** (15–35%) or **High** (35% or more). The bar runs from 0% (locked in) to 50% (a coin flip: the price sitting on the target, the most a reversal can be).
+- **Kalshi's price says:** the same outcome priced by Kalshi (1 − the leading side's price), for comparison.
+- **Currently, Cushion:** how far the price is from the target, and that distance in units of expected movement (σ).
 - **Momentum strength:** how strongly the price has moved over the last 3 minutes compared with normal, and whether it's moving with or against the side that's winning.
 - **Breaks above window high, Breaks below window low:** the chance of a new high or low before the close.
 
-These odds come from a random-walk model of the 60-second average, calibrated on past windows. Momentum, pullbacks, wicks, RSI and target crossings were all tested as early warnings. None of them added anything beyond these calibrated odds.
+- **Live check:** every minute the card's figure is logged, and scored once the window settles. For each band (under 15%, 15–35%, 35% or more) the card shows what it said on average and how often the leading side actually lost. Close agreement means the card is well calibrated; small counts are noisy.
+
+These odds come from a random-walk model of the 60-second average. The uncertainty includes the price's **tracking error**, so a few-dollar cushion isn't treated as certain. After each history rebuild (at most hourly), the bot refits the corrections from the saved history. It fits on the older 80% of windows, scores on the newest 20%, and keeps a refit only where it does better. It tries three volatility weightings (the last hour equally, or a 30- or 15-minute half-life) and a blend with Kalshi's price.
+
+In the Nov 3 backtest of 3,038 windows, the card was well calibrated: when it said about 10%, 20%, 30% and 43%, the leading side lost 8%, 22%, 32% and 44% of the time. That matched Kalshi's price (Brier 0.1611 vs. 0.1615), and blending the two didn't help, so the card shows Kalshi's figure alongside rather than mixed in. The refit improved the breakout odds, and volatility weighted toward the last 30 minutes scored best. Momentum, pullbacks, wicks, RSI and target crossings were all tested as early warnings; none added anything.
 
 ## 4. Trade recommendations
 
@@ -267,8 +272,8 @@ A timestamped list of what the bot is doing: windows opening, calls locking, set
 
 - **Training data.** Every settled window is a training example: the live windows the bot watched, plus past windows rebuilt from Kalshi's history and Coinbase's 1-minute candles (up to 180 days). Recent windows count more than old ones.
 - **Market-anchored.** The model starts from Kalshi's own odds. Learned weights adjust those odds only when the inputs carry information the price doesn't.
-- **Held-out check.** After every settlement, the model retrains on the older 80% of windows and is scored on the newest 20%. Learned weights are used only if they beat Kalshi's odds on those unseen windows; otherwise the bot follows Kalshi.
-- **Promotion trials.** Context-only signals are re-tested after each retrain, and three significant wins in a row would promote one into the model.
+- **Held-out check.** After every settlement the model is scored walk-forward: the newest 40% of windows is split into four blocks, and each is predicted by a model fitted only on the windows before it. Learned weights are used only if they beat Kalshi's odds in at least three of the four blocks and overall, so one lucky stretch can't switch the bot over; otherwise it follows Kalshi.
+- **Promotion trials.** Context-only signals are re-tested after each retrain. A result counts toward promotion only when it's judged on at least 200 windows that settled since that signal's last counted result, so three wins in a row are three separate pieces of evidence (about six days apart at minimum). The significance bar is also raised for testing six signals at once (a z of about 2.64 instead of 1.96), so one signal doesn't look significant by chance.
 - **Updates right after the close.** Accuracy updates and the model retrains as soon as Kalshi settles a window, without waiting for the next call.
 
 ## 10. Your data

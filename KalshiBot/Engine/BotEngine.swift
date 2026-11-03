@@ -79,6 +79,12 @@ final class BotEngine {
     /// (official − estimate), newest last.
     private(set) var trackingErrors: [Double] = []
 
+    /// The Reversal Risk card's corrections, refitted from the saved history (nil = fixed ones).
+    private(set) var riskCalibration: RiskCalibration?
+    /// The card's flip chance logged once a minute, scored at settlement.
+    private(set) var riskLog = RiskLog()
+    private var lastRiskLogMinute: Int?
+
     /// Median size of the recent tracking errors, once there are a few.
     var trackingError: Double? {
         trackingErrors.count >= 3 ? Self.median(trackingErrors.map(abs)) : nil
@@ -116,6 +122,10 @@ final class BotEngine {
     /// Consecutive trial outcomes per signal: +n = n significant gains in a row,
     /// −n = n non-gains in a row. Three in a row promotes or demotes.
     private var trialStreaks: [String: Int] = [:]
+    /// Per signal, the trial-pool size at its last counted result; the next counted result
+    /// needs `ModelTrainer.freshWindowsPerTrial` more windows, so a streak is built from
+    /// separate evidence rather than the same windows judged again.
+    private var trialMarks: [String: Int] = [:]
     static let trialStreakToChange = 3
 
     /// Keeps the Mac from idle-sleeping while the bot runs, so no window is missed.
@@ -239,6 +249,7 @@ final class BotEngine {
         static let sourceOffsets = "sourceOffsetSamples.v1"
         static let trackingErrors = "brtiTrackingErrors.v1"
         static let keepMacAwake = "keepMacAwake"
+        static let riskCalibration = "riskCalibration.v1"
         static let historyFeatureVersion = "historyFeatureVersion"
         static let historyCallDelay = "historyCallDelay"
         static let lastResetAt = "lastResetAt"
@@ -246,6 +257,7 @@ final class BotEngine {
         static let callTimeAccuracy = "callTimeAccuracy"
         static let promoted = "promotedFeatures"
         static let trialStreaks = "trialStreaks"
+        static let trialMarks = "trialMarks"
         /// Written by the dashboard; kept through a reset as a display setting.
         static let dashboardRequiredHeight = "dashboardRequiredHeight"
     }
@@ -291,6 +303,7 @@ final class BotEngine {
         let savedPromotions = Set((defaults.stringArray(forKey: Keys.promoted) ?? []).compactMap(FeatureKey.init(rawValue:)))
         promoted = savedPromotions
         trialStreaks = defaults.dictionary(forKey: Keys.trialStreaks) as? [String: Int] ?? [:]
+        trialMarks = defaults.dictionary(forKey: Keys.trialMarks) as? [String: Int] ?? [:]
         if let stored = defaults.dictionary(forKey: Keys.callTimeAccuracy) as? [String: Double] {
             callTimeAccuracy = Dictionary(uniqueKeysWithValues: stored.compactMap { key, value in Int(key).map { ($0, value) } })
         }
@@ -305,6 +318,10 @@ final class BotEngine {
         sourceOffsetSamples = defaults.dictionary(forKey: Keys.sourceOffsets) as? [String: [Double]] ?? [:]
         updateSourceOffsets()
         trackingErrors = defaults.array(forKey: Keys.trackingErrors) as? [Double] ?? []
+        if let data = defaults.data(forKey: Keys.riskCalibration) {
+            riskCalibration = try? JSONDecoder().decode(RiskCalibration.self, from: data)
+        }
+        riskLog = RiskLog.load()
     }
 
     // MARK: Lifecycle
@@ -324,7 +341,10 @@ final class BotEngine {
         }
         tasks = [
             // One price sample per wall-clock second, like the BRTI itself.
-            onEverySecond { $0.sampleSpot() },
+            onEverySecond {
+                $0.sampleSpot()
+                $0.logRiskIfDue()
+            },
             repeating(every: .seconds(1)) { await $0.pollMarket() },
             repeating(every: .seconds(15)) { await $0.pollIndicators() },
             repeating(every: .seconds(15)) { await $0.resolvePending() },
@@ -361,10 +381,11 @@ final class BotEngine {
     /// history, calibration and activity are kept.
     func resetModelKeepingData() {
         let defaults = UserDefaults.standard
-        for key in [Keys.model, Keys.promoted, Keys.trialStreaks] { defaults.removeObject(forKey: key) }
+        for key in [Keys.model, Keys.promoted, Keys.trialStreaks, Keys.trialMarks] { defaults.removeObject(forKey: key) }
         defaults.set(Date.now, forKey: Keys.lastResetAt)
         promoted = []
         trialStreaks = [:]
+        trialMarks = [:]
         model = .starting(excluding: excludedFeatures)
         recomputeLive()
         log("Model reset: starting weights, promotions and trials cleared; retraining on the data already collected")
@@ -403,11 +424,15 @@ final class BotEngine {
         sourceOffsetSamples = [:]
         updateSourceOffsets()
         trackingErrors = []
+        riskLog = RiskLog()
+        saveRiskLog()
+        riskCalibration = nil
         let offsets = sourceOffsets
         Task { await liveFeed.setOffsets(offsets) }
         callTimeAccuracy = [:]
         promoted = []
         trialStreaks = [:]
+        trialMarks = [:]
         model = .starting(excluding: excludedFeatures)
         liveExampleCount = 0
         historyExampleCount = 0
@@ -770,6 +795,7 @@ final class BotEngine {
                 let market = try await kalshi.market(ticker: record.ticker)
                 guard let wentUp = market.settledUp else { continue }
                 record.actualUp = wentUp
+                if riskLog.resolve(ticker: record.ticker, settledUp: wentUp) { saveRiskLog() }
                 record.settlementValue = market.settlementValue
                 record.resolvedAt = .now
                 addLiveExample(from: record, wentUp: wentUp, in: context)
@@ -959,6 +985,7 @@ final class BotEngine {
             guard let earliest = markets.first?.openTime, let latest = markets.last?.openTime else {
                 let saved = cache
                 await Task.detached { saved.save() }.value
+                await refitRiskCalibration(from: saved)
                 await retrain()
                 return
             }
@@ -977,6 +1004,7 @@ final class BotEngine {
             }
             let saved = cache
             await Task.detached { saved.save() }.value
+            await refitRiskCalibration(from: saved)
             let history = cache.candles
             let mids: [TimeInterval: [String: Double]] = [delay: cache.mids(at: delay)]
 
@@ -1077,8 +1105,9 @@ final class BotEngine {
         let samples = examples.map(\.sample)
         let excluded = excludedFeatures
         let promotedNow = promoted
+        let marks = trialMarks
         let trained = await Task.detached(priority: .utility) {
-            ModelTrainer.train(samples, excluding: excluded, promoted: promotedNow)
+            ModelTrainer.train(samples, excluding: excluded, promoted: promotedNow, lastTrialMarks: marks)
         }.value
 
         model = trained
@@ -1086,7 +1115,8 @@ final class BotEngine {
         recomputeLive()
         if let evaluation = trained.evaluation {
             let baseline = trained.marketAnchored ? "Kalshi" : "starting weights"
-            log("Retrained on \(trained.trainingCount) windows — holdout \(Self.percent(evaluation.accuracy)) learned vs. \(Self.percent(evaluation.priorAccuracy)) \(baseline); using \(trained.usesLearnedWeights ? "learned weights" : baseline)")
+            let blocks = evaluation.folds.map { "won \(evaluation.foldsWon ?? 0) of \($0) blocks, " } ?? ""
+            log("Retrained on \(trained.trainingCount) windows — learned weights \(blocks)\(Self.percent(evaluation.accuracy)) vs. \(Self.percent(evaluation.priorAccuracy)) \(baseline) on \(evaluation.holdoutCount) held-out windows; using \(trained.usesLearnedWeights ? "learned weights" : baseline)")
         } else {
             log("Retrained on \(trained.trainingCount) windows")
         }
@@ -1094,18 +1124,20 @@ final class BotEngine {
     }
 
     /// Promotes a context signal after `trialStreakToChange` consecutive significant gains;
-    /// demotes a promoted one after as many consecutive trials without one.
+    /// demotes a promoted one after as many consecutive trials without one. Only results
+    /// judged on fresh windows count (see `trialMarks`).
     private func applyTrials(_ trials: [String: TrialResult]) {
         var changed = false
         for (raw, result) in trials {
-            guard let key = FeatureKey(rawValue: raw), result.hasEnoughData else { continue }
+            guard let key = FeatureKey(rawValue: raw), result.counts else { continue }
+            if let mark = result.mark { trialMarks[raw] = mark }
             let streak = trialStreaks[raw] ?? 0
             trialStreaks[raw] = result.isSignificantGain ? max(streak, 0) + 1 : min(streak, 0) - 1
             let current = trialStreaks[raw] ?? 0
             if !promoted.contains(key), current >= Self.trialStreakToChange {
                 promoted.insert(key)
                 changed = true
-                log("Promoted \(key.title) into the model: it improved held-out predictions \(current) trials in a row")
+                log("Promoted \(key.title) into the model: it improved predictions on \(current) separate sets of fresh windows in a row")
             } else if promoted.contains(key), current <= -Self.trialStreakToChange {
                 promoted.remove(key)
                 changed = true
@@ -1123,6 +1155,7 @@ final class BotEngine {
     private func savePromotions() {
         UserDefaults.standard.set(promoted.map(\.rawValue).sorted(), forKey: Keys.promoted)
         UserDefaults.standard.set(trialStreaks, forKey: Keys.trialStreaks)
+        UserDefaults.standard.set(trialMarks, forKey: Keys.trialMarks)
     }
 
     // MARK: Helpers
@@ -1131,13 +1164,70 @@ final class BotEngine {
     /// the measure a 30-day backtest found well calibrated (≈95% of settlements inside
     /// ±2σ). Sampling the 1-second composite understates it: the price can sit still for
     /// several seconds between quote changes. Falls back to the ticks without candles.
+    /// Weighted as the latest risk calibration chose (equally over the hour, or toward the
+    /// last 15–30 minutes), so the card reacts to a sudden change in pace as fast as the
+    /// history showed is useful.
     var volatilityPerRootSecond: Double? {
         let closes = candles.map(\.close)
-        if closes.count >= 31, let last = closes.last,
-           let sd = Indicators.standardDeviation(Indicators.logReturns(Array(closes.suffix(61)))) {
-            return sd * last / 60.0.squareRoot()
+        if closes.count >= 31,
+           let volatility = RiskCalibration.volatility(closes: Array(closes.suffix(61)), halfLife: riskCalibration?.volatilityHalfLife) {
+            return volatility
         }
         return Indicators.realizedVolatility(ticks.map { (time: $0.time, price: $0.price) })
+    }
+
+    /// The Reversal Risk card's assessment for `market` right now.
+    func reversalRisk(for market: KalshiMarket, at now: Date = .now) -> ReversalRisk? {
+        guard let strike = market.floorStrike, let price = spot, let volatility = volatilityPerRootSecond else { return nil }
+        let samples = ticks.map { (time: $0.time, price: $0.price) }
+        // Prices already inside the settlement minute, once it has begun.
+        let settlementStart = market.closeTime.addingTimeInterval(-60)
+        let settling = samples.filter { $0.time >= settlementStart && $0.time < market.closeTime }.map(\.price)
+        let extremes = WindowChart.extremes(windowPrices(for: market), from: market.openTime, to: market.closeTime)
+        return ReversalRisk.assess(.init(
+            price: price,
+            strike: strike,
+            secondsRemaining: market.closeTime.timeIntervalSince(now),
+            volatility: volatility,
+            settlementAverageSoFar: settling.isEmpty ? nil : settling.reduce(0, +) / Double(settling.count),
+            windowHigh: extremes?.high.price,
+            windowLow: extremes?.low.price,
+            // The sample closest to 3 minutes ago (within a few seconds).
+            priceEarlier: samples.last(where: { now.timeIntervalSince($0.time) >= 180 })
+                .flatMap { now.timeIntervalSince($0.time) <= 185 ? $0.price : nil },
+            // Median absolute error → 1σ, for a normal error.
+            priceUncertainty: trackingError.map { $0 / 0.6745 } ?? 0,
+            kalshiYesMid: market.yesMid,
+            calibration: riskCalibration))
+    }
+
+    /// Logs the card's flip chance at :30 past each minute of the window, for its live check.
+    private func logRiskIfDue(at now: Date = .now) {
+        let minute = Int(now.timeIntervalSince1970 / 60)
+        guard Int(now.timeIntervalSince1970) % 60 >= 30, minute != lastRiskLogMinute,
+              let market = currentMarket, !market.strikeIsEstimate, now >= market.openTime, now < market.closeTime,
+              let risk = reversalRisk(for: market, at: now) else { return }
+        lastRiskLogMinute = minute
+        riskLog.append(.init(ticker: market.ticker, time: now, flip: risk.flipProbability, leaderUp: risk.currentlyUp))
+        saveRiskLog()
+    }
+
+    private func saveRiskLog() {
+        let log = riskLog
+        Task.detached { log.save() }
+    }
+
+    /// Refits the card's corrections from the saved history, at most hourly.
+    private func refitRiskCalibration(from cache: HistoryCache) async {
+        if let fitted = riskCalibration?.fittedAt, Date.now.timeIntervalSince(fitted) < 3600 { return }
+        guard let calibration = await Task.detached(operation: { RiskCalibration.best(from: cache) }).value else { return }
+        riskCalibration = calibration
+        if let data = try? JSONEncoder().encode(calibration) {
+            UserDefaults.standard.set(data, forKey: Keys.riskCalibration)
+        }
+        let e = calibration.evaluation
+        let weighting = calibration.volatilityHalfLife.map { "\(Int($0))-min half-life" } ?? "last hour, equal"
+        log("Reversal risk recalibrated on \(calibration.windows) windows (\(weighting) volatility): held-out Brier \(String(format: "%.4f", calibration.score)) vs. Kalshi \(String(format: "%.4f", e.kalshi)) and fixed \(String(format: "%.4f", e.fixedFlip))\(calibration.blend != nil ? "; blending Kalshi's price" : "")")
     }
 
     /// Completed 1-minute candles from the 1-second ticks. Starts at the first full

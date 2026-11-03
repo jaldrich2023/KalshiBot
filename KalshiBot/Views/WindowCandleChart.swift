@@ -27,7 +27,8 @@ struct WindowCandleChart: View {
     private func tags(closes: [(time: Date, price: Double)],
                       trend: (start: (time: Date, price: Double), end: (time: Date, price: Double), slopePerSecond: Double)?,
                       extremes: WindowChart.Extremes?) -> [ChartTag] {
-        let breakouts = WindowChart.breakouts(extremes, price: engine.spot, volatility: engine.volatilityPerRootSecond, market: market)
+        let breakouts = WindowChart.breakouts(extremes, price: engine.spot, volatility: engine.volatilityPerRootSecond, market: market,
+                                              calibration: engine.riskCalibration)
         var tags = WindowChart.referenceTags(market: market, extremes: extremes, breakouts: breakouts, price: closes.last?.price)
         if let last = closes.last {
             tags.append(ChartTag(id: "close", text: "Close \(BotEngine.usd(last.price))", color: .accentColor, value: nil, side: .trailing, rank: 1))

@@ -22,7 +22,7 @@ Before you report, search the [existing issues](https://github.com/jaldrich2023/
 
 Include:
 
-- **The Kalshi Bot version** (**Kalshi Bot › About Kalshi Bot**, for example "Version 2.15.1 · Build 29").
+- **The Kalshi Bot version** (**Kalshi Bot › About Kalshi Bot**, for example "Version 2.17.1 · Build 33").
 - **The macOS version** (Apple menu › About This Mac) and your Mac model.
 - **Steps to reproduce:** what you did, what you expected, and what happened instead.
 - **The window.** Give the window's ticker (shown under the Current Window card, for example `KXBTC15M-26NOV021815-15`) and the time, if the problem is about a particular call, price or settlement.

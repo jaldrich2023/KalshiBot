@@ -16,6 +16,9 @@
 //    beyond the price, so they no longer appear as risk factors.
 //  - The reflection-principle breakout probability ran high (said 92%, 47%, 18%
 //    where 83%, 36%, 13% happened); a fitted correction brought it in line.
+//  Since 2.16 these corrections, a blend with Kalshi's own price and the volatility
+//  weighting are refitted from the saved history at each retrain (`RiskCalibration`),
+//  and the price's measured tracking error widens the uncertainty.
 //
 
 import Foundation
@@ -50,6 +53,10 @@ nonisolated struct ReversalRisk: Sendable, Equatable {
     let cushionSigma: Double
     /// Calibrated probability that the currently winning side loses at settlement.
     let flipProbability: Double
+    /// Kalshi's own price for the same outcome (1 − the leading side's price), when known.
+    var kalshiFlipProbability: Double?
+    /// Whether `flipProbability` blends in Kalshi's price.
+    var blendsKalshi = false
     /// Calibrated probabilities that the price trades above the window high / below the
     /// window low before the close (nil until there's a high and low).
     let breakoutUpProbability: Double?
@@ -79,14 +86,11 @@ nonisolated struct ReversalRisk: Sendable, Equatable {
         return 2 * Indicators.normalCDF(z) - 1
     }
 
-    /// Risk on a 0–100% scale: 0% = current side effectively locked in, 100% = sitting
-    /// right on the target (a coin flip, the most a flip can ever be).
-    var riskScore: Double { min(flipProbability * 2, 1) }
-
+    /// By the chance the leading side loses: under 15% low, under 35% moderate.
     var level: Level {
-        switch riskScore {
-        case ..<0.3: .low
-        case ..<0.7: .moderate
+        switch flipProbability {
+        case ..<0.15: .low
+        case ..<0.35: .moderate
         default: .high
         }
     }
@@ -106,14 +110,33 @@ nonisolated struct ReversalRisk: Sendable, Equatable {
         /// The price `momentumSeconds` ago, for momentum strength.
         var priceEarlier: Double?
         var momentumSeconds: TimeInterval = 180
+        /// 1σ error of `price` against the official index, in dollars (from the tracking error).
+        var priceUncertainty: Double = 0
+        /// Kalshi's Yes mid right now, to compare with and (if calibrated) blend in.
+        var kalshiYesMid: Double?
+        /// Refitted corrections; nil = the fixed Oct 31 ones.
+        var calibration: RiskCalibration?
     }
 
     static func assess(_ input: Inputs) -> ReversalRisk {
         let odds = SettlementOdds.estimate(price: input.price, strike: input.strike,
                                            secondsRemaining: input.secondsRemaining, volatility: input.volatility,
-                                           settlementAverageSoFar: input.settlementAverageSoFar)
+                                           settlementAverageSoFar: input.settlementAverageSoFar,
+                                           priceUncertainty: input.priceUncertainty)
         let up = odds.expected >= input.strike
-        let flip = up ? 1 - odds.probabilityUp : odds.probabilityUp
+        let kalshiFlip = input.kalshiYesMid.flatMap { mid in mid > 0 && mid < 1 ? (up ? 1 - mid : mid) : nil }
+        // The refit covers +3 to +12 minutes; outside that (and in the settlement minute,
+        // where part of the answer is already locked) the fixed correction applies.
+        let inFittedRange = input.secondsRemaining >= 180 && input.secondsRemaining <= 720
+        let flip: Double
+        let blends: Bool
+        if let calibration = input.calibration, inFittedRange {
+            flip = calibration.flipProbability(raw: odds.rawFlip, kalshiFlip: kalshiFlip)
+            blends = calibration.blend != nil && kalshiFlip != nil
+        } else {
+            flip = up ? 1 - odds.probabilityUp : odds.probabilityUp
+            blends = false
+        }
 
         var factors: [Factor] = []
         if let soFar = input.settlementAverageSoFar, input.secondsRemaining < 60 {
@@ -143,12 +166,14 @@ nonisolated struct ReversalRisk: Sendable, Equatable {
 
         return ReversalRisk(
             currentlyUp: up, cushion: abs(odds.expected - input.strike), cushionSigma: odds.cushionSigma,
-            flipProbability: flip,
+            flipProbability: flip, kalshiFlipProbability: kalshiFlip, blendsKalshi: blends,
             breakoutUpProbability: input.windowHigh.map {
-                breakoutProbability(distance: $0 - input.price, volatility: input.volatility, secondsRemaining: input.secondsRemaining)
+                breakoutProbability(distance: $0 - input.price, volatility: input.volatility, secondsRemaining: input.secondsRemaining,
+                                    calibration: input.calibration)
             },
             breakoutDownProbability: input.windowLow.map {
-                breakoutProbability(distance: input.price - $0, volatility: input.volatility, secondsRemaining: input.secondsRemaining)
+                breakoutProbability(distance: input.price - $0, volatility: input.volatility, secondsRemaining: input.secondsRemaining,
+                                    calibration: input.calibration)
             },
             momentum: momentum,
             factors: factors)
@@ -158,12 +183,14 @@ nonisolated struct ReversalRisk: Sendable, Equatable {
     /// reaches it before the close. Reflection principle for a random walk,
     /// P = 2·Φ(−d / σ√T), then calibrated (logit a + b·x, fitted on 15 days of windows
     /// and checked on the next 15).
-    static func breakoutProbability(distance: Double, volatility: Double, secondsRemaining: TimeInterval) -> Double {
+    static func breakoutProbability(distance: Double, volatility: Double, secondsRemaining: TimeInterval,
+                                    calibration: RiskCalibration? = nil) -> Double {
         let remaining = max(secondsRemaining, 0)
         guard remaining > 0, volatility > 0 else { return distance <= 0 ? 1 : 0 }
         if distance <= 0 { return 1 }
         let raw = min(2 * Indicators.normalCDF(-distance / (volatility * remaining.squareRoot())), 1)
-        return Calibration.apply(raw, a: -0.429, b: 0.656)
+        if let calibration { return calibration.breakoutProbability(raw: raw) }
+        return Calibration.apply(raw, a: RiskCalibration.fixedBreakout[0], b: RiskCalibration.fixedBreakout[1])
     }
 
     /// Sign changes of (value − strike), ignoring exact touches.
@@ -190,38 +217,46 @@ nonisolated enum SettlementOdds {
         let cushionSigma: Double
         /// Calibrated P(settles at or above the strike).
         let probabilityUp: Double
+        /// Uncalibrated random-walk chance the leading side loses.
+        var rawFlip: Double = 0.5
     }
 
     /// - Parameters:
     ///   - volatility: dollars per √second.
     ///   - settlementAverageSoFar: average of prices already inside the final 60s, if it has started.
+    ///   - priceUncertainty: 1σ error of `price` against the official index, added to the
+    ///     movement still to come (it matters only when the price is close to the target).
     static func estimate(price: Double, strike: Double, secondsRemaining: TimeInterval, volatility: Double,
-                         settlementAverageSoFar: Double? = nil) -> Estimate {
+                         settlementAverageSoFar: Double? = nil, priceUncertainty: Double = 0) -> Estimate {
         let remaining = max(secondsRemaining, 0)
         let expected: Double
-        let sigma: Double
+        let movement: Double
         if remaining < 60, let soFar = settlementAverageSoFar {
             // Inside the settlement minute: the elapsed part is known. The rest is the
             // mean of a random walk from `price` over `remaining` seconds, weighted by
             // its share of the minute: σ = vol · (r/60) · √(r/3).
             let share = remaining / 60
             expected = (1 - share) * soFar + share * price
-            sigma = volatility * share * (remaining / 3).squareRoot()
+            movement = volatility * share * (remaining / 3).squareRoot()
         } else {
             // Full random walk until the settlement minute, then its average (~⅓ of a
             // minute's variance).
             expected = price
-            sigma = volatility * (max(remaining - 60, 0) + min(remaining, 60) / 3).squareRoot()
+            movement = volatility * (max(remaining - 60, 0) + min(remaining, 60) / 3).squareRoot()
         }
+        // The bot's prices — including the settlement seconds already in — can be off the
+        // official index by the tracking error, which the remaining movement doesn't shrink.
+        let sigma = (movement * movement + priceUncertainty * priceUncertainty).squareRoot()
         let gap = expected - strike
         guard sigma > 0 else {
             return Estimate(expected: expected, sigma: 0, cushionSigma: gap == 0 ? 0 : .infinity,
-                            probabilityUp: gap > 0 ? 1 : (gap < 0 ? 0 : 0.5))
+                            probabilityUp: gap > 0 ? 1 : (gap < 0 ? 0 : 0.5), rawFlip: gap == 0 ? 0.5 : 0)
         }
         let z = abs(gap) / sigma
-        let flip = calibratedFlip(raw: Indicators.normalCDF(-z))
+        let raw = Indicators.normalCDF(-z)
+        let flip = calibratedFlip(raw: raw)
         return Estimate(expected: expected, sigma: sigma, cushionSigma: z,
-                        probabilityUp: gap >= 0 ? 1 - flip : flip)
+                        probabilityUp: gap >= 0 ? 1 - flip : flip, rawFlip: raw)
     }
 
     /// The random-walk flip probability is accurate from ~15% up but too low in the

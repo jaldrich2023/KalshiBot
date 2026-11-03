@@ -5,6 +5,63 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.17.1] — 2026-11-03 · Build 33
+
+### Changed
+- **The window fits the screen.** It's up to 2,400 points wide (was a fixed 1,819) and
+  never taller than the screen's usable area, so it no longer runs off the bottom; anything
+  that still doesn't fit scrolls inside the window.
+- **Reversal Risk moved to the top row**, between Prediction and Accuracy; the top row has
+  five equal columns.
+- The 60s average chart now spans the full width and matches the candle chart's height.
+
+## [2.17.0] — 2026-11-03 · Build 32
+
+### Changed
+- **Walk-forward model check.** Learned weights are now judged on four blocks covering
+  the newest 40% of windows, each predicted by a model fitted only on the windows before
+  it. They're used only if they beat Kalshi's odds in at least three of the four blocks
+  and overall, instead of on a single 80/20 split that could flip by chance. The Model
+  card shows how many blocks they won.
+- **Promotion trials need fresh evidence.** A trial result counts toward a signal's
+  promotion (or demotion) streak only when judged on at least 200 windows that settled
+  since that signal's last counted result. Before, consecutive retrains judged almost the
+  same windows, so "three wins in a row" was close to one test.
+- **Multiple-testing correction.** Trial margins use a Bonferroni-adjusted z (≈2.64 for
+  six signals instead of 1.96), so one of the six doesn't look significant by chance.
+
+### Fixed
+- Five Swift concurrency warnings in the chart labels (`ChartTag` was main-actor-isolated
+  but used by the nonisolated label placement); each would be an error in Swift 6 mode.
+
+## [2.16.0] — 2026-11-03 · Build 31
+
+### Changed
+- **Reversal Risk headline is now the actual chance the leading side loses.** It used
+  to show that chance doubled, on a scale where 100% meant a coin flip, so a 37% chance
+  read as "74.8% High". Levels are now Low under 15%, Moderate 15–35%, High from 35%,
+  and the bar runs to 50% (a coin flip).
+- The card shows **Kalshi's price for the same outcome** beside its own figure.
+- The flip uncertainty includes the price's **tracking error** against the official
+  index, so a few-dollar cushion is no longer treated as near-certain.
+
+### Added
+- **Automatic recalibration.** After each history rebuild (at most hourly), the card's
+  corrections are refitted from the saved history: fitted on the older 80% of windows,
+  scored on the newest 20%, and kept only where they score better. Three volatility
+  weightings (the last hour equally, or a 30- or 15-minute half-life) and a blend with
+  Kalshi's price are tried. On Nov 3 the card was already well calibrated (said ~10/20/
+  30/43%, happened 8/22/32/44%) and matched Kalshi (Brier 0.1611 vs. 0.1615); blending
+  didn't help, the breakout refit did, and a 30-minute half-life scored best.
+- **Live check** on the card: its figure is logged every minute, scored when the window
+  settles, and summarized as said → happened for each risk band.
+
+## [2.15.2] — 2026-11-03 · Build 30
+
+### Fixed
+- Running the unit tests no longer starts the bot. The tests run inside the app, so a
+  test run used to start a second bot on the same prediction log and training data.
+
 ## [2.15.1] — 2026-11-02 · Build 29
 
 ### Changed

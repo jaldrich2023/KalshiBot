@@ -30,11 +30,14 @@ struct DashboardView: View {
     /// (content + padding + the toolbar inset). The app window sizes itself to this.
     @AppStorage("dashboardRequiredHeight") private var requiredHeight: Double = 0
     @State private var topInset: CGFloat = 0
+    /// Measured height of the candle chart's row; the 60s average chart matches it.
+    @State private var candleRowHeight: CGFloat = 0
 
-    /// One of four equal columns. The top-row cards each take one; the side cards
-    /// beside the charts take one too, so they line up with the Model card above.
+    /// One of five equal columns. The top-row cards each take one; the candle-pattern
+    /// card beside the candle chart takes one too, so it lines up with the card above.
+    private static let columns: CGFloat = 5
     private var columnWidth: CGFloat {
-        max((contentWidth - 3 * Theme.spacing) / 4, 0)
+        max((contentWidth - (Self.columns - 1) * Theme.spacing) / Self.columns, 0)
     }
 
     var body: some View {
@@ -67,24 +70,33 @@ struct DashboardView: View {
                 HStack(alignment: .top, spacing: Theme.spacing) {
                     windowPanel.frame(width: columnWidth)
                     predictionPanel.frame(width: columnWidth)
+                    Group {
+                        if let market = engine.currentMarket {
+                            ReversalRiskCard(market: market)
+                        } else {
+                            Panel(title: "Reversal Risk", systemImage: "arrow.triangle.2.circlepath") {
+                                Text("Waiting for the current window…").foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .frame(width: columnWidth)
                     AccuracyPanel(stats: stats, skipped: records.filter { $0.isResolved && engine.isNoCall($0) }.count)
                         .frame(width: columnWidth)
                     ModelPanel(stats: stats, records: records).frame(width: columnWidth)
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 if let market = engine.currentMarket {
-                    HStack(alignment: .top, spacing: Theme.spacing) {
-                        WindowPriceChart(market: market, record: currentRecord)
-                        ReversalRiskCard(market: market)
-                            .frame(width: columnWidth)
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
+                    // As tall as the candle row below, so the two charts match.
+                    WindowPriceChart(market: market, record: currentRecord)
+                        .frame(height: candleRowHeight > 0 ? candleRowHeight : nil)
+                        .fixedSize(horizontal: false, vertical: candleRowHeight == 0)
                     HStack(alignment: .top, spacing: Theme.spacing) {
                         WindowCandleChart(market: market)
                         CandlePatternCard(market: market)
                             .frame(width: columnWidth)
                     }
                     .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { candleRowHeight = $0 }
                 }
             }
             .onGeometryChange(for: CGSize.self) { $0.size } action: {
@@ -671,7 +683,14 @@ struct ModelPanel: View {
                 Divider()
                 Text("Holdout test (newest \(evaluation.holdoutCount) windows)")
                     .font(.subheadline.bold())
-                    .help("Trained on older windows only, then scored on the newest 20% it never saw")
+                    .help("Walk-forward: the newest 40% is split into blocks in time order, and each is scored by a model fitted only on the windows before it")
+                if let folds = evaluation.folds, folds > 1 {
+                    LabeledContent("Learned weights won") {
+                        Text("\(evaluation.foldsWon ?? 0) of \(folds) blocks")
+                            .monospacedDigit()
+                    }
+                    .help("Learned weights are used only if they beat \(baselinePhrase(model)) in at least \(folds - 1) of \(folds) blocks and overall")
+                }
                 LabeledContent("Trained model") {
                     Text("\(BotEngine.percent(evaluation.accuracy)) · Brier \(evaluation.brierScore.formatted(.number.precision(.fractionLength(4))))")
                         .monospacedDigit()

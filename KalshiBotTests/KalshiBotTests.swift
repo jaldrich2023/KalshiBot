@@ -198,7 +198,9 @@ struct ModelTrainerTests {
     @Test func holdoutShowsImprovementOverStartingWeights() throws {
         let model = ModelTrainer.train(samples(800), excluding: [])
         let evaluation = try #require(model.evaluation)
-        #expect(evaluation.holdoutCount == 160)
+        #expect(evaluation.holdoutCount == 320)          // newest 40%, in four blocks
+        #expect(evaluation.folds == 4)
+        #expect((evaluation.foldsWon ?? 0) >= 3)
         #expect(evaluation.accuracy > evaluation.priorAccuracy)
         #expect(evaluation.brierScore < evaluation.priorBrierScore)
         #expect(model.usesLearnedWeights)
@@ -270,6 +272,48 @@ struct ModelTrainerTests {
         // A noise context signal shouldn't win.
         let noise = try #require(model.trial(for: .stochastic))
         #expect(!noise.hasEnoughData)     // not present in these samples at all
+    }
+
+    @Test func bonferroniRaisesTheBarForSeveralSignals() {
+        #expect(abs(ModelTrainer.zScore(forTests: 1) - 1.96) < 0.01)
+        #expect(abs(ModelTrainer.zScore(forTests: 6) - 2.64) < 0.01)
+    }
+
+    @Test func trialCountsOnlyOnFreshWindows() throws {
+        var rng = SeededGenerator(seed: 11)
+        let data = (0..<1500).map { i in
+            let ema = Double.random(in: -2...2, using: &rng)
+            return TrainingSample(features: [.kalshiImplied: 0, .emaTrend: ema],
+                                  wentUp: Double.random(in: 0...1, using: &rng) < 1 / (1 + exp(-1.2 * ema)),
+                                  time: Date(timeIntervalSince1970: Double(i) * 900))
+        }
+        // First result: judged on the newest 20% (300 windows) and counted, marked at 1500.
+        let first = try #require(ModelTrainer.train(data, excluding: []).trial(for: .emaTrend))
+        #expect(first.counted == true && first.mark == 1500 && first.windows == 300)
+        // 100 windows later: shown, but not counted — those windows were already judged.
+        let soon = try #require(ModelTrainer.train(data, excluding: [], lastTrialMarks: ["emaTrend": 1400]).trial(for: .emaTrend))
+        #expect(soon.counted == false && !soon.counts)
+        // 250 fresh windows: judged on exactly those, and counted.
+        let later = try #require(ModelTrainer.train(data, excluding: [], lastTrialMarks: ["emaTrend": 1250]).trial(for: .emaTrend))
+        #expect(later.counted == true && later.windows == 250 && later.mark == 1500)
+    }
+
+    @Test func oneLuckyBlockDoesNotSwitchToLearnedWeights() throws {
+        // RSI drives outcomes before the walk-forward stretch (so a weight is learned),
+        // reverses in the first three blocks (so it hurts there), and returns only in the
+        // last block. One winning block out of four mustn't switch the model over.
+        var rng = SeededGenerator(seed: 5)
+        let data = (0..<1000).map { i in
+            let rsi = Double.random(in: -2...2, using: &rng)
+            let logit = (i < 600 || i >= 900) ? 2 * rsi : -1.5 * rsi
+            return TrainingSample(features: [.kalshiImplied: 0, .rsi: rsi],
+                                  wentUp: Double.random(in: 0...1, using: &rng) < 1 / (1 + exp(-logit)),
+                                  time: Date(timeIntervalSince1970: Double(i) * 900))
+        }
+        let model = ModelTrainer.train(data, excluding: [])
+        let evaluation = try #require(model.evaluation)
+        #expect(evaluation.folds == 4)
+        #expect(!model.usesLearnedWeights)
     }
 
     @Test func promotedSignalsAreUsedByTheModel() {
@@ -434,8 +478,39 @@ struct ReversalRiskTests {
     @Test func sittingOnTheTargetIsACoinFlip() {
         let risk = ReversalRisk.assess(inputs(price: 100))
         #expect(abs(risk.flipProbability - 0.5) < 1e-9)
-        #expect(abs(risk.riskScore - 1) < 1e-9)
         #expect(risk.level == .high)
+    }
+
+    @Test func levelsFollowTheActualChanceOfLosing() {
+        // 10%, 25% and 40% flip chances: Low, Moderate, High — no doubling.
+        func level(_ flip: Double) -> ReversalRisk.Level {
+            ReversalRisk(currentlyUp: true, cushion: 1, cushionSigma: 1, flipProbability: flip,
+                         breakoutUpProbability: nil, breakoutDownProbability: nil, factors: []).level
+        }
+        #expect(level(0.10) == .low)
+        #expect(level(0.25) == .moderate)
+        #expect(level(0.40) == .high)
+    }
+
+    @Test func trackingErrorWidensTheUncertaintyNearTheTarget() {
+        let exact = SettlementOdds.estimate(price: 103, strike: 100, secondsRemaining: 70, volatility: 0.2)
+        let noisy = SettlementOdds.estimate(price: 103, strike: 100, secondsRemaining: 70, volatility: 0.2, priceUncertainty: 4)
+        #expect(noisy.sigma > exact.sigma)
+        #expect(noisy.probabilityUp < exact.probabilityUp)   // a $3 cushion is less sure with ±$4 of index error
+    }
+
+    @Test func kalshiPriceIsShownAndBlendedOnlyWhenCalibrated() {
+        var input = inputs(price: 105)
+        input.kalshiYesMid = 0.8
+        let plain = ReversalRisk.assess(input)
+        #expect(plain.kalshiFlipProbability.map { abs($0 - 0.2) < 1e-9 } == true)
+        #expect(!plain.blendsKalshi)
+        // A calibration that trusts Kalshi completely: logit p = logit(Kalshi's flip).
+        input.calibration = RiskCalibration(flip: nil, blend: [0, 0, 1], breakout: nil, volatilityHalfLife: nil,
+                                            evaluation: .init(), windows: 1000, fittedAt: .now)
+        let blended = ReversalRisk.assess(input)
+        #expect(blended.blendsKalshi)
+        #expect(abs(blended.flipProbability - 0.2) < 1e-6)
     }
 
     @Test func biggerCushionAndLessTimeMeanLessRisk() {
@@ -1303,5 +1378,48 @@ struct SourceOffsetTests {
     @Test func correctedMidAddsTheOffset() {
         let status = SourceStatus(source: .coinbase, mid: 80_000, state: .used, offset: -12.5)
         #expect(status.corrected == 79_987.5)
+    }
+}
+
+
+struct RiskCalibrationTests {
+    @Test func logisticFitRecoversAKnownRelationship() {
+        // y ~ Bernoulli(σ(0.5 + 2x)) on a grid, generated deterministically.
+        var rows: [(x: [Double], y: Bool)] = []
+        for i in 0..<4000 {
+            let x = Double(i % 200) / 100 - 1
+            let p = 1 / (1 + exp(-(0.5 + 2 * x)))
+            rows.append(([x], Double((i * 7919) % 1000) / 1000 < p))
+        }
+        let w = RiskCalibration.fitLogistic(rows)
+        #expect(w != nil)
+        if let w {
+            #expect(abs(w[0] - 0.5) < 0.25)
+            #expect(abs(w[1] - 2) < 0.4)
+        }
+    }
+
+    @Test func ewmaVolatilityReactsToARecentBurst() {
+        // A calm hour, then 10 volatile minutes at the end.
+        var closes = [80_000.0]
+        for i in 1...60 { closes.append(closes[i - 1] + (i > 50 ? (i.isMultiple(of: 2) ? 40 : -40) : (i.isMultiple(of: 2) ? 5 : -5))) }
+        let equal = RiskCalibration.volatility(closes: closes, halfLife: nil)!
+        let recent = RiskCalibration.volatility(closes: closes, halfLife: 15)!
+        #expect(recent > equal)
+    }
+
+    @Test func riskLogScoresSettledWindowsIntoBands() {
+        var log = RiskLog()
+        log.append(.init(ticker: "A", time: .now, flip: 0.1, leaderUp: true))
+        log.append(.init(ticker: "A", time: .now, flip: 0.4, leaderUp: false))
+        log.append(.init(ticker: "B", time: .now, flip: 0.2, leaderUp: true))
+        let first = log.resolve(ticker: "A", settledUp: true)
+        let second = log.resolve(ticker: "A", settledUp: true)
+        #expect(first)
+        #expect(!second)                                           // already scored
+        let bands = log.bands
+        #expect(bands.map(\.label) == ["Under 15%", "35% or more"])  // B not settled yet
+        #expect(bands[0].happened == 0)                            // Up led and won
+        #expect(bands[1].happened == 1)                            // Down led and lost
     }
 }
