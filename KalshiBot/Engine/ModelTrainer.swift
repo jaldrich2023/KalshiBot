@@ -166,8 +166,8 @@ nonisolated enum ModelTrainer {
     static let minimumLiveTrialWindows = 500
 
     /// z for a two-sided 95% test spread over `count` tests (Bonferroni): 1.96 for one,
-    /// ≈2.64 for six. Testing six signals at 95% each would let one look significant by
-    /// chance about a quarter of the time.
+    /// ≈2.77 for the nine context signals. Testing nine at 95% each would let one look significant by
+    /// chance more than a third of the time.
     static func zScore(forTests count: Int) -> Double {
         let tail = 0.025 / Double(max(count, 1))
         var lo = 0.0, hi = 10.0

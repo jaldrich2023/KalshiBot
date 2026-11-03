@@ -21,6 +21,12 @@ nonisolated enum FeatureKey: String, CaseIterable, Codable, Sendable, Identifiab
     case stochastic
     case vwapDeviation
     case kalshiImplied
+    // Combinations (2.19): a signal counted only in the situation where it plausibly
+    // matters. Derived from the signals above (see `FeatureExtractor.addCombinations`),
+    // so past windows have them without a rebuild.
+    case momentumNearTarget
+    case rsiNearTarget
+    case momentumWhenUnsure
 
     var id: String { rawValue }
 
@@ -36,6 +42,9 @@ nonisolated enum FeatureKey: String, CaseIterable, Codable, Sendable, Identifiab
         case .stochastic: "Stochastic %K"
         case .vwapDeviation: "VWAP(60) deviation"
         case .kalshiImplied: "Kalshi implied odds"
+        case .momentumNearTarget: "Momentum near the target"
+        case .rsiNearTarget: "RSI near the target"
+        case .momentumWhenUnsure: "Momentum when Kalshi is unsure"
         }
     }
 
@@ -132,7 +141,21 @@ nonisolated enum FeatureExtractor {
             f[.kalshiImplied] = kalshiFeature(yesMid: mid)
         }
 
-        return f.mapValues { min(max($0, -4), 4) }
+        return addCombinations(f.mapValues { min(max($0, -4), 4) })
+    }
+
+    /// How close a z-like value is to zero: 1 at 0, ~0.6 at ±1, ~0.1 at ±2.
+    static func closeness(_ z: Double) -> Double { exp(-z * z / 2) }
+
+    /// Adds the combination signals from the ones already present. Stored windows are
+    /// passed through here when loaded, so the trainer can trial them on all history.
+    static func addCombinations(_ base: [FeatureKey: Double]) -> [FeatureKey: Double] {
+        var f = base
+        if let m = f[.momentum5m], let h = f[.headStart] { f[.momentumNearTarget] = m * closeness(h) }
+        if let r = f[.rsi], let h = f[.headStart] { f[.rsiNearTarget] = r * closeness(h) }
+        // kalshiImplied is log-odds; ±1 is about 27%/73%.
+        if let m = f[.momentum5m], let k = f[.kalshiImplied] { f[.momentumWhenUnsure] = m * closeness(k) }
+        return f
     }
 
     /// The 1-minute bar (stamped with its start) that ends exactly at `time`.

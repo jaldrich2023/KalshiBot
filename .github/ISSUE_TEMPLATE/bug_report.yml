@@ -13,7 +13,7 @@ body:
     attributes:
       label: Kalshi Bot version
       description: Kalshi Bot › About Kalshi Bot
-      placeholder: Version 2.17.1 · Build 33
+      placeholder: Version 2.19.0 · Build 35
     validations:
       required: true
   - type: input

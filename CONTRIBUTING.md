@@ -22,7 +22,7 @@ Before you report, search the [existing issues](https://github.com/jaldrich2023/
 
 Include:
 
-- **The Kalshi Bot version** (**Kalshi Bot › About Kalshi Bot**, for example "Version 2.17.1 · Build 33").
+- **The Kalshi Bot version** (**Kalshi Bot › About Kalshi Bot**, for example "Version 2.19.0 · Build 35").
 - **The macOS version** (Apple menu › About This Mac) and your Mac model.
 - **Steps to reproduce:** what you did, what you expected, and what happened instead.
 - **The window.** Give the window's ticker (shown under the Current Window card, for example `KXBTC15M-26NOV021815-15`) and the time, if the problem is about a particular call, price or settlement.
@@ -31,7 +31,7 @@ Include:
 
 ## Proposing a new signal
 
-Kalshi's price is very hard to beat at this horizon. Every indicator tested so far added nothing on held-out windows: momentum, RSI, MACD, Bollinger, stochastic, VWAP, EMA, ADX/DI, order-book imbalance, trade flow, the perpetual futures premium, funding and DVOL. The user manual has the details. A useful proposal says how the signal would be computed from data available at the call, and ideally shows a held-out test (fit on older windows, score on newer ones) against Kalshi's price at the call.
+Kalshi's price is very hard to beat at this horizon. Every indicator tested so far added nothing on held-out windows: momentum, RSI, MACD, Bollinger, stochastic, VWAP, EMA, ADX/DI, order-book imbalance, trade flow, the perpetual futures premium, funding, DVOL, Kalshi's bid–ask spread, volume and last trade, and the previous window's result. The user manual has the details. A useful proposal says how the signal would be computed from data available at the call, and ideally shows a held-out test (fit on older windows, score on newer ones) against Kalshi's price at the call.
 
 ## Keep personal data out of issues
 

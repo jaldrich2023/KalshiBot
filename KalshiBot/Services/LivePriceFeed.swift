@@ -33,6 +33,8 @@ nonisolated struct SourceStatus: Sendable, Identifiable, Equatable {
     var since: Date?
     /// Times its stream was reconnected since the bot started (streamed sources only).
     var reconnects = 0
+    /// Its share of the composite (0 when not used).
+    var weight: Double = 0
     var id: String { source.rawValue }
 
     /// The mid as it enters the composite.
@@ -82,6 +84,9 @@ actor LivePriceFeed {
     private var quotes: [String: Quote] = [:]
     /// Per-exchange corrections toward the official BRTI, set by the engine.
     private var offsets: [String: Double] = [:]
+    /// Relative weights by how steadily each exchange tracks the official BRTI (see
+    /// `BotEngine.trackingWeights`); empty = equal weights.
+    private var trackingWeights: [String: Double] = [:]
     /// Each source's current state and when it began, for "stale for 2 min".
     private var stateSince: [String: (state: SourceStatus.State, since: Date)] = [:]
     private var reconnects: [String: Int] = [:]
@@ -140,8 +145,9 @@ actor LivePriceFeed {
 
     /// Per-exchange corrections (by `CompositePriceClient.Exchange` raw value) applied
     /// before the quotes are combined.
-    func setOffsets(_ offsets: [String: Double]) {
+    func setOffsets(_ offsets: [String: Double], weights: [String: Double] = [:]) {
         self.offsets = offsets
+        self.trackingWeights = weights
     }
 
     /// Exchanges currently contributing a fresh quote.
@@ -163,12 +169,13 @@ actor LivePriceFeed {
     /// more left — drop the highest and lowest too, and average the rest. That moves
     /// whenever any middle exchange moves, and no single book can drag it.
     func composite(at date: Date = .now) -> (price: Double, sources: Int)? {
-        Self.combine(freshMids(at: date)).composite
+        Self.combine(freshMids(at: date), weights: trackingWeights).composite
     }
 
     /// Each source's latest mid and whether it's in the composite right now.
     func statuses(at date: Date = .now) -> [SourceStatus] {
-        let states = Self.combine(freshMids(at: date)).states
+        let combined = Self.combine(freshMids(at: date), weights: trackingWeights)
+        let states = combined.states
         return CompositePriceClient.Exchange.allCases.map { source in
             let id = source.rawValue
             let quote = quotes[id]
@@ -176,7 +183,8 @@ actor LivePriceFeed {
             let state: SourceStatus.State = states[id] ?? (mid == nil ? .waiting : .stale)
             if stateSince[id]?.state != state { stateSince[id] = (state, date) }
             return SourceStatus(source: source, mid: mid, state: state, offset: offsets[id] ?? 0,
-                                since: stateSince[id]?.since, reconnects: reconnects[id] ?? 0)
+                                since: stateSince[id]?.since, reconnects: reconnects[id] ?? 0,
+                                weight: combined.shares[id] ?? 0)
         }
     }
 
@@ -196,9 +204,39 @@ actor LivePriceFeed {
     /// The composite and each source's part in it. Drops mids outside the band around
     /// the median; with five or more left, also leaves the highest and lowest out of the
     /// average; averages the rest.
-    static func combine(_ mids: [(id: String, mid: Double)]) -> (composite: (price: Double, sources: Int)?, states: [String: SourceStatus.State]) {
+    /// No single exchange carries more than this share of the composite.
+    static let maxShare = 0.25
+
+    /// Shares for the used sources from their relative weights (missing = the median
+    /// weight), capped at `maxShare` with the excess spread over the rest.
+    static func shares(for ids: [String], weights: [String: Double]) -> [String: Double] {
+        guard !ids.isEmpty else { return [:] }
+        let known = ids.compactMap { weights[$0] }.sorted()
+        let typical = known.isEmpty ? 1 : known[known.count / 2]
+        var raw = Dictionary(uniqueKeysWithValues: ids.map { ($0, max(weights[$0] ?? typical, 0)) })
+        if raw.values.reduce(0, +) <= 0 { raw = raw.mapValues { _ in 1 } }
+        // A cap below an equal share can't be met; fall back to equal shares then.
+        let cap = max(maxShare, 1 / Double(ids.count))
+        var capped: [String: Double] = [:]
+        for _ in 0..<ids.count {
+            let free = raw.filter { capped[$0.key] == nil }
+            let remaining = 1 - capped.values.reduce(0, +)
+            let total = free.values.reduce(0, +)
+            guard total > 0 else { break }
+            let over = free.filter { $0.value / total * remaining > cap }
+            if over.isEmpty {
+                for (id, w) in free { capped[id] = w / total * remaining }
+                break
+            }
+            for id in over.keys { capped[id] = cap }
+        }
+        return capped
+    }
+
+    static func combine(_ mids: [(id: String, mid: Double)], weights: [String: Double] = [:])
+        -> (composite: (price: Double, sources: Int)?, states: [String: SourceStatus.State], shares: [String: Double]) {
         let sorted = mids.sorted { $0.mid < $1.mid }
-        guard !sorted.isEmpty else { return (nil, [:]) }
+        guard !sorted.isEmpty else { return (nil, [:], [:]) }
         let n = sorted.count
         let median = n % 2 == 1 ? sorted[n / 2].mid : (sorted[n / 2 - 1].mid + sorted[n / 2].mid) / 2
         let band = outlierBand(for: median)
@@ -208,12 +246,15 @@ actor LivePriceFeed {
         // Two quotes further apart than twice the band both sit outside it around their
         // midpoint; with no way to tell which is off, use the median rather than
         // averaging nothing (0/0 = NaN, which crashed the charts).
-        guard !inLine.isEmpty else { return ((median, n), states) }
+        guard !inLine.isEmpty else { return ((median, n), states, [:]) }
         let core = inLine.count >= 5 ? Array(inLine.dropFirst().dropLast()) : inLine
         for entry in inLine { states[entry.id] = .trimmed }
         for entry in core { states[entry.id] = .used }
+        // Weighted by tracking steadiness when known; equal otherwise.
+        let shares = shares(for: core.map(\.id), weights: weights)
+        let price = core.map { $0.mid * (shares[$0.id] ?? 0) }.reduce(0, +)
         // `sources` counts every in-line book, including the two trimmed extremes.
-        return ((core.map(\.mid).reduce(0, +) / Double(core.count), inLine.count), states)
+        return ((price, inLine.count), states, shares)
     }
 
     // MARK: Connection

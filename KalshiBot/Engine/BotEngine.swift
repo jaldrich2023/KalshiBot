@@ -334,9 +334,9 @@ final class BotEngine {
         log("Bot started")
         discardOutdatedHistory(in: context)
 
-        let offsets = sourceOffsets
+        let offsets = sourceOffsets, weights = trackingWeights
         Task {
-            await liveFeed.setOffsets(offsets)
+            await liveFeed.setOffsets(offsets, weights: weights)
             await liveFeed.start()
         }
         tasks = [
@@ -374,6 +374,27 @@ final class BotEngine {
     private func endActivity() {
         if let keepAwake { ProcessInfo.processInfo.endActivity(keepAwake) }
         keepAwake = nil
+    }
+
+    /// Files the app writes outside SwiftData and UserDefaults.
+    nonisolated static var storedFiles: [URL] { [HistoryCache.fileURL, RiskLog.fileURL] }
+
+    /// Erase everything: stops the bot and deletes the prediction log, training history,
+    /// every setting, calibration and statistic, the saved market download and the risk
+    /// log — as if the app were freshly installed. The caller relaunches the app so every
+    /// setting starts again from its default.
+    func eraseEverything() {
+        stop()
+        if let context = modelContext {
+            for record in (try? context.fetch(FetchDescriptor<PredictionRecord>())) ?? [] { context.delete(record) }
+            for example in (try? context.fetch(FetchDescriptor<TrainingExample>())) ?? [] { context.delete(example) }
+            try? context.save()
+        }
+        if let domain = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: domain)
+            UserDefaults.standard.synchronize()
+        }
+        for url in Self.storedFiles { try? FileManager.default.removeItem(at: url) }
     }
 
     /// Model-only reset: starting weights, and promotions and trials cleared, then a
@@ -427,8 +448,8 @@ final class BotEngine {
         riskLog = RiskLog()
         saveRiskLog()
         riskCalibration = nil
-        let offsets = sourceOffsets
-        Task { await liveFeed.setOffsets(offsets) }
+        let offsets = sourceOffsets, weights = trackingWeights
+        Task { await liveFeed.setOffsets(offsets, weights: weights) }
         callTimeAccuracy = [:]
         promoted = []
         trialStreaks = [:]
@@ -871,12 +892,28 @@ final class BotEngine {
         }
         UserDefaults.standard.set(sourceOffsetSamples, forKey: Keys.sourceOffsets)
         updateSourceOffsets()
-        let offsets = sourceOffsets
-        Task { await liveFeed.setOffsets(offsets) }
+        let offsets = sourceOffsets, weights = trackingWeights
+        Task { await liveFeed.setOffsets(offsets, weights: weights) }
     }
 
     private func updateSourceOffsets() {
         sourceOffsets = Self.offsets(from: sourceOffsetSamples)
+        trackingWeights = sourceOffsets.isEmpty ? [:] : Self.trackingWeights(from: sourceOffsetSamples)
+    }
+
+    /// Relative composite weight per exchange: 1 / (variance of its offset + $4²). An
+    /// exchange whose gap to the official index is steady counts more than one whose gap
+    /// wanders; the $4² floor stops a short lucky run from earning an outsized weight.
+    /// Exchanges with too few samples are left out (they get the median weight).
+    private(set) var trackingWeights: [String: Double] = [:]
+
+    nonisolated static func trackingWeights(from samples: [String: [Double]]) -> [String: Double] {
+        samples.compactMapValues { values -> Double? in
+            guard values.count >= minimumOffsetSamples else { return nil }
+            let mean = values.reduce(0, +) / Double(values.count)
+            let variance = values.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(values.count - 1)
+            return 1 / (variance + 16)
+        }
     }
 
     /// Median offset per exchange with enough samples; exchanges not yet measured get the

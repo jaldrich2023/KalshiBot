@@ -5,6 +5,35 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.19.0] — 2026-11-03 · Build 35
+
+### Added
+- **Composite weighted by tracking steadiness.** Once each exchange's gap to the official
+  index has been measured, exchanges whose gap is steady count more than ones whose gap
+  wanders (weight 1 / (offset variance + $4²)), capped at 25% each. The source list shows
+  each exchange's actual share.
+- **Three combination signals**, trialled for promotion like the other context signals:
+  momentum near the target, RSI near the target, and momentum when Kalshi is unsure.
+  They're derived from stored signals, so the trials cover the full history. With nine
+  signals on trial, the significance bar is z ≈ 2.77.
+
+### Tested, not added
+- Kalshi's bid–ask spread at the call (1¢ in 99.8% of 6,435 windows, so it can't tell
+  windows apart), ask/bid asymmetry, volume in the first 3 minutes, and the last trade
+  versus the mid: all slightly worse than Kalshi's mid on the newest 30% of windows.
+- The previous window's result: the next window repeated it 49.5% of the time, and it
+  didn't help on held-out windows.
+
+## [2.18.0] — 2026-11-03 · Build 34
+
+### Added
+- **Erase Everything, Including Settings…** in the Model card's Reset Model menu. After
+  a second confirmation it stops the bot and deletes everything the app has stored — the
+  prediction log, training history, every setting, the price and Reversal Risk
+  calibrations, the live check, call-time statistics and the saved market download —
+  then relaunches as if newly installed. "Copy Log, Erase and Relaunch" keeps a CSV of
+  the prediction log on the clipboard first.
+
 ## [2.17.1] — 2026-11-03 · Build 33
 
 ### Changed

@@ -1,6 +1,6 @@
 # Known issues and limitations
 
-These are known, documented limitations of Kalshi Bot 2.17.1. They aren't treated as bugs.
+These are known, documented limitations of Kalshi Bot 2.19.0. They aren't treated as bugs.
 
 ## Predictions
 
@@ -26,4 +26,5 @@ These are known, documented limitations of Kalshi Bot 2.17.1. They aren't treate
 ## App
 
 - **Sleeping misses windows.** With **Keep Mac awake** off, the Mac can sleep while the bot runs, and windows during sleep are missed (they're still learned from history later).
-- **Clear All Data can't be undone.** It copies the log to the clipboard as CSV first; paste it somewhere to keep it. **Reset Model, Keep Data** resets only the model.
+- **Clear All Data and Erase Everything can't be undone.** Erase Everything also removes every setting and the saved market download.
+  Both offer to copy the log to the clipboard as CSV first; paste it somewhere to keep it. **Reset Model, Keep Data** resets only the model.

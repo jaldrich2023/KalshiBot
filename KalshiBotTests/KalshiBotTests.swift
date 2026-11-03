@@ -1423,3 +1423,54 @@ struct RiskCalibrationTests {
         #expect(bands[1].happened == 1)                            // Down led and lost
     }
 }
+
+struct TrackingWeightTests {
+    @Test func equalWithoutMeasurements() {
+        let shares = LivePriceFeed.shares(for: ["a", "b", "c", "d"], weights: [:])
+        #expect(shares.values.allSatisfy { abs($0 - 0.25) < 1e-9 })
+    }
+
+    @Test func steadierExchangesCountMoreButNeverOverTheCap() {
+        // "a" tracks the index very steadily; the rest wander.
+        let shares = LivePriceFeed.shares(for: ["a", "b", "c", "d", "e", "f"],
+                                          weights: ["a": 100, "b": 1, "c": 1, "d": 1, "e": 1, "f": 1])
+        #expect(abs((shares["a"] ?? 0) - LivePriceFeed.maxShare) < 1e-9)    // capped at 25%
+        #expect(abs(shares.values.reduce(0, +) - 1) < 1e-9)
+        #expect(abs((shares["b"] ?? 0) - 0.15) < 1e-9)                       // the other 75% split evenly
+    }
+
+    @Test func weightedCompositeLeansTowardTheSteadyExchange() {
+        let mids: [(id: String, mid: Double)] = [("a", 80_000), ("b", 80_010), ("c", 80_020)]
+        let equal = LivePriceFeed.combine(mids).composite!.price
+        let weighted = LivePriceFeed.combine(mids, weights: ["a": 10, "b": 1, "c": 1]).composite!.price
+        #expect(abs(equal - 80_010) < 1e-9)
+        #expect(weighted < equal)
+    }
+
+    @Test func trackingWeightsFavorSteadyOffsets() {
+        let steady = Array(repeating: -12.0, count: 8)
+        let noisy = [-30.0, 5, -20, 10, -25, 0, -15, 8]
+        let w = BotEngine.trackingWeights(from: ["steady": steady, "noisy": noisy, "short": [1, 2]])
+        #expect((w["steady"] ?? 0) > (w["noisy"] ?? 0))
+        #expect(w["short"] == nil)                       // too few samples
+        #expect(abs((w["steady"] ?? 0) - 1.0 / 16) < 1e-9) // zero variance → the $4² floor
+    }
+}
+
+struct CombinationSignalTests {
+    @Test func combinationsFadeAwayFromTheTarget() {
+        let near = FeatureExtractor.addCombinations([.momentum5m: 2, .rsi: 1, .headStart: 0, .kalshiImplied: 0])
+        let far = FeatureExtractor.addCombinations([.momentum5m: 2, .rsi: 1, .headStart: 3, .kalshiImplied: 3])
+        #expect(near[.momentumNearTarget] == 2 && near[.rsiNearTarget] == 1 && near[.momentumWhenUnsure] == 2)
+        #expect(abs(far[.momentumNearTarget] ?? 1) < 0.03)
+        #expect(abs(far[.momentumWhenUnsure] ?? 1) < 0.03)
+    }
+
+    @Test func combinationsAreContextCandidates() {
+        for key in [FeatureKey.momentumNearTarget, .rsiNearTarget, .momentumWhenUnsure] {
+            #expect(!key.isBaseInput)
+            #expect(FeatureKey.promotionCandidates.contains(key))
+            #expect(key.priorWeight(marketAnchored: true) == 0)
+        }
+    }
+}

@@ -32,6 +32,12 @@ extension FeatureKey {
             "Distance from the 60-minute volume-weighted average price. Far above VWAP can mean stretched."
         case .kalshiImplied:
             "The Kalshi market's own price for Up — the crowd's probability, which already reflects public information."
+        case .momentumNearTarget:
+            "5-minute momentum, counted only while the price is near the target — where a push could decide the window. Fades to zero as the cushion grows."
+        case .rsiNearTarget:
+            "RSI, counted only while the price is near the target. Fades to zero as the cushion grows."
+        case .momentumWhenUnsure:
+            "5-minute momentum, counted only while Kalshi's price is near 50/50 — when the market itself is undecided."
         }
     }
 
@@ -60,6 +66,8 @@ extension FeatureKey {
         case .stochastic: return (50 + v * 25).formatted(.number.precision(.fractionLength(0)))
         case .vwapDeviation: return "\(v >= 0 ? "+" : "−")\(abs(v * 2).formatted(.number.precision(.fractionLength(2)))) ATR"
         case .kalshiImplied: return pct(1 / (1 + exp(-v)))
+        case .momentumNearTarget, .momentumWhenUnsure: return sigma(v)
+        case .rsiNearTarget: return (50 + v * 15).formatted(.number.precision(.fractionLength(0)))
         }
     }
 
@@ -99,6 +107,12 @@ extension FeatureKey {
             let p = 1 / (1 + exp(-v))
             if abs(p - 0.5) < 0.03 { return "The market sees this window as a coin flip." }
             return "The market favors \(p > 0.5 ? "Up" : "Down") at \(max(p, 1 - p).formatted(.percent.precision(.fractionLength(0))))."
+        case .momentumNearTarget, .momentumWhenUnsure:
+            if abs(v) < 0.2 { return self == .momentumNearTarget ? "Little momentum, or the price is well clear of the target." : "Little momentum, or Kalshi is already confident." }
+            return "\(v > 0 ? "Upward" : "Downward") momentum while \(self == .momentumNearTarget ? "the price is near the target" : "the market is undecided")."
+        case .rsiNearTarget:
+            if abs(v) < 0.2 { return "RSI is neutral, or the price is well clear of the target." }
+            return "RSI leans \(v > 0 ? "bullish" : "bearish") while the price is near the target."
         }
     }
 

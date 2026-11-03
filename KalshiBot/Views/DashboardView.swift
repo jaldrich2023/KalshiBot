@@ -232,17 +232,19 @@ struct SourceList: View {
     /// Offset added to the composite to track CF Benchmarks' BRTI.
     let calibration: Double
 
-    /// Used sources share the average equally; everything else carries no weight.
     private var usedCount: Int { statuses.count { $0.state == .used } }
 
+    /// Each used source's share, as the composite weighted it (by how steadily it tracks
+    /// the official index once measured, capped at 25%); everything else carries none.
     private func weight(_ status: SourceStatus) -> Double {
-        status.state == .used && usedCount > 0 ? 1 / Double(usedCount) : 0
+        status.state == .used ? status.weight : 0
     }
 
     /// Weighted average of the used sources, each with its offset — the same quotes the list shows.
     private var composite: Double? {
-        let used = statuses.compactMap { $0.state == .used ? $0.corrected : nil }
-        return used.isEmpty ? nil : used.reduce(0, +) / Double(used.count)
+        let used = statuses.compactMap { s in s.state == .used ? s.corrected.map { ($0, s.weight) } : nil }
+        let total = used.map(\.1).reduce(0, +)
+        return total > 0 ? used.map { $0.0 * $0.1 }.reduce(0, +) / total : nil
     }
 
     var body: some View {
@@ -280,7 +282,7 @@ struct SourceList: View {
                     Text("")
                     Text("100%").fontWeight(.semibold)
                 }
-                .help("Equal-weight average of the sources marked Used: \(usedCount) of \(statuses.count) right now.")
+                .help("Weighted average of the sources marked Used (\(usedCount) of \(statuses.count) right now). Once each exchange's gap to the official index has been measured, steadier exchanges count more, up to 25% each; until then they count equally.")
                 GridRow {
                     Image(systemName: "scope").foregroundStyle(.tint)
                     Text("Index est.").fontWeight(.semibold)
@@ -292,7 +294,7 @@ struct SourceList: View {
                 .help("The composite plus the BRTI calibration offset — the price the bot uses for Kalshi's settlement index (CF Benchmarks BRTI).")
             }
             .monospacedDigit()
-            Text("✓ used · ↔ trimmed (highest/lowest) · ⚠︎ off-market · clock stale, with time out. Gaps include each exchange's BRTI offset. Composite = average of \(usedCount) used.")
+            Text("✓ used · ↔ trimmed (highest/lowest) · ⚠︎ off-market · clock stale, with time out. Gaps include each exchange's BRTI offset. Composite = weighted average of \(usedCount) used.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -653,12 +655,26 @@ private func baselinePhrase(_ model: PredictionModel) -> String {
     model.marketAnchored ? "Kalshi's market odds" : "the starting weights"
 }
 
+/// Erases all stored data, then starts a fresh copy of the app and quits this one, so
+/// every setting comes back at its default.
+@MainActor private func eraseAndRelaunch(_ engine: BotEngine) {
+    engine.eraseEverything()
+    let configuration = NSWorkspace.OpenConfiguration()
+    configuration.createsNewApplicationInstance = true
+    NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in
+        Task { @MainActor in NSApplication.shared.terminate(nil) }
+    }
+}
+
 struct ModelPanel: View {
     @Environment(BotEngine.self) private var engine
     let stats: AccuracyStats
     /// For the CSV copy offered before a full reset.
     let records: [PredictionRecord]
     @State private var isConfirmingReset = false
+    @State private var isConfirmingErase = false
+
+    private func eraseAndRelaunch() { KalshiBot.eraseAndRelaunch(engine) }
     static let targetAccuracy = 0.70
 
     var body: some View {
@@ -747,8 +763,20 @@ struct ModelPanel: View {
                         NSPasteboard.general.setString(PredictionLogView.csv(for: records), forType: .string)
                         engine.resetModel()
                     }
+                    Button("Erase Everything, Including Settings…", role: .destructive) { isConfirmingErase = true }
                 } message: {
-                    Text("Reset Model, Keep Data returns the weights, promotions and trials to their starting point and retrains on the data already collected. The prediction log, accuracy and history are kept.\n\nClear All Data copies the prediction log to the clipboard as CSV, then permanently deletes the log and accuracy history, the training history, the price calibration and exchange offsets, call-time statistics, alerts and the activity log. Settings and the saved market download are kept, so the rebuild takes seconds.")
+                    Text("Reset Model, Keep Data returns the weights, promotions and trials to their starting point and retrains on the data already collected. The prediction log, accuracy and history are kept.\n\nClear All Data copies the prediction log to the clipboard as CSV, then permanently deletes the log and accuracy history, the training history, the price calibration and exchange offsets, call-time statistics, alerts and the activity log. Settings and the saved market download are kept, so the rebuild takes seconds.\n\nErase Everything also deletes all settings and the saved market download, then relaunches the app as if newly installed.")
+                }
+                .alert("Erase everything?", isPresented: $isConfirmingErase) {
+                    Button("Copy Log, Erase and Relaunch", role: .destructive) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(PredictionLogView.csv(for: records), forType: .string)
+                        eraseAndRelaunch()
+                    }
+                    Button("Erase and Relaunch", role: .destructive) { eraseAndRelaunch() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This permanently deletes the prediction log and accuracy history, the training history, every setting (trading style, call time, stake, stop-loss and take-profit, and the rest), the price calibration and exchange offsets, the Reversal Risk calibration and live check, and the saved market download. The app then relaunches with default settings and downloads Kalshi's full market history again, which takes a few minutes. This can't be undone.")
                 }
         }
         .font(.callout)

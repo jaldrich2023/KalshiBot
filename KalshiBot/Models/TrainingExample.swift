@@ -39,6 +39,6 @@ final class TrainingExample {
         for (key, value) in raw {
             if let feature = FeatureKey(rawValue: key) { features[feature] = value }
         }
-        return TrainingSample(features: features, wentUp: wentUp, time: openTime)
+        return TrainingSample(features: FeatureExtractor.addCombinations(features), wentUp: wentUp, time: openTime)
     }
 }

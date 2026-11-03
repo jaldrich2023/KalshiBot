@@ -2,7 +2,7 @@
 
 Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.
 
-Version 2.17.1 · macOS 27.2 or later · © 2026 I'm The Team, LLC
+Version 2.19.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC
 
 ![The dashboard during a live window](images/01-dashboard.jpg)
 
@@ -66,7 +66,7 @@ Because both the target and the settlement are 60-second averages, the last minu
 - **Window, Closes in, Target, Kalshi Yes** show the window's times, the time left, the target price, and Kalshi's live Yes price.
 - **Sources** lists the ten exchange feeds: Coinbase, Kraken, Bitstamp, Gemini, Crypto.com, Binance.US, Deribit (USDC), Kraken (USDC), OKX (USDC) and KuCoin (USDC). Each row shows the latest price, the gap to the composite (after that exchange's offset), and its weight. A ✓ means the source is in use. A source is dropped when its price is off-market (more than 0.05% from the median) or its feed has gone stale; instead of a weight, it then shows how long it's been out. With five or more sources, the highest and lowest are trimmed. Hover a row for its offset and how often its stream has reconnected.
 - **Per-exchange offsets.** At every window open, each exchange's 60-second average is compared with Kalshi's official target. Once three exchanges have been measured at six opens, each one's typical gap (its median offset) is added to its price before averaging. Exchanges that haven't been measured yet use the typical offset of the others. This keeps the composite steady when a source drops out or comes back.
-- **Composite** is the average of the sources in use. **Index est.** adds the **BRTI calibration**, a running correction for whatever gap remains.
+- **Composite** is the weighted average of the sources in use. Once the offsets are measured, an exchange whose gap to the official index is steady counts more than one whose gap wanders, up to 25% each; until then all count equally. The weight column shows each exchange's share. **Index est.** adds the **BRTI calibration**, a running correction for whatever gap remains.
 - **Tracking error** is how far the index estimate typically was (the median) from Kalshi's official target at recent opens. Only windows that finish within about that much of their target are at risk of being misjudged.
 - The window's ticker is shown at the bottom, for example `KXBTC15M-26NOV021815-15`.
 
@@ -216,11 +216,13 @@ The **Indicators** tab shows every signal the bot computes, each on its own card
 
 **Last-60s tick momentum**, **15m momentum**, **EMA 9/21 trend**, **Bollinger %B**, **Stochastic %K** and **VWAP(60) deviation** move closely with a model input, so counting them too would count the same information twice. After every retrain, each is re-tested on held-out windows; three significant wins in a row would promote it into the model. Tick momentum exists only in live windows, so it's tested on those alone, once 500 are available.
 
+Three **combination signals** are trialled the same way. Each counts a signal only where it plausibly matters: **Momentum near the target** and **RSI near the target** fade to zero as the cushion grows, and **Momentum when Kalshi is unsure** fades as Kalshi's price moves away from 50/50. They're computed from the stored signals, so they're tested on the full history.
+
 ### What has been tested
 
 Held-out tests (fit on older windows, scored on newer ones) found **no signal that predicts these windows beyond Kalshi's own price at the call**. This includes the 15 technical indicators; ADX and ±DI; order-book imbalance; Coinbase taker trade flow; the Deribit perpetual premium and funding rate; and DVOL. Kalshi's price was well calibrated across more than 6,000 windows. Calls at 55–60% won 58% of the time, at 60–65% they won 63%, and at 70–80% they won 77%.
 
-That's why the bot usually follows Kalshi's odds. If you want a higher hit rate, take only the confident calls, with **Calls** set to ≥60% or higher. Low-confidence calls are close to coin flips, and they're priced that way.
+Kalshi's bid–ask spread (1¢ in 99.8% of windows at the call), its volume, the last trade versus the mid, and the previous window's result were also tested on Nov 3; none helped. That's why the bot usually follows Kalshi's odds. If you want a higher hit rate, take only the confident calls, with **Calls** set to ≥60% or higher. Low-confidence calls are close to coin flips, and they're priced that way.
 
 ## 6. Performance
 
@@ -273,14 +275,14 @@ A timestamped list of what the bot is doing: windows opening, calls locking, set
 - **Training data.** Every settled window is a training example: the live windows the bot watched, plus past windows rebuilt from Kalshi's history and Coinbase's 1-minute candles (up to 180 days). Recent windows count more than old ones.
 - **Market-anchored.** The model starts from Kalshi's own odds. Learned weights adjust those odds only when the inputs carry information the price doesn't.
 - **Held-out check.** After every settlement the model is scored walk-forward: the newest 40% of windows is split into four blocks, and each is predicted by a model fitted only on the windows before it. Learned weights are used only if they beat Kalshi's odds in at least three of the four blocks and overall, so one lucky stretch can't switch the bot over; otherwise it follows Kalshi.
-- **Promotion trials.** Context-only signals are re-tested after each retrain. A result counts toward promotion only when it's judged on at least 200 windows that settled since that signal's last counted result, so three wins in a row are three separate pieces of evidence (about six days apart at minimum). The significance bar is also raised for testing six signals at once (a z of about 2.64 instead of 1.96), so one signal doesn't look significant by chance.
+- **Promotion trials.** Context-only signals are re-tested after each retrain. A result counts toward promotion only when it's judged on at least 200 windows that settled since that signal's last counted result, so three wins in a row are three separate pieces of evidence (about six days apart at minimum). The significance bar is also raised for testing nine signals at once (a z of about 2.77 instead of 1.96), so one signal doesn't look significant by chance.
 - **Updates right after the close.** Accuracy updates and the model retrains as soon as Kalshi settles a window, without waiting for the next call.
 
 ## 10. Your data
 
 All data stays on your Mac, in Kalshi Bot's sandboxed container. Nothing is sent anywhere except the public market-data requests described in [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md).
 
-**Reset Model…** in the Model card offers two choices:
+**Reset Model…** in the Model card offers three choices:
 
 - **Reset Model, Keep Data** returns the weights, promotions and trials to their starting point and retrains on the data already collected. The prediction log, accuracy, training history and calibration are kept.
 - **Copy Log, Then Clear All Data** copies the prediction log to the clipboard as CSV, then permanently deletes:
@@ -291,6 +293,8 @@ All data stays on your Mac, in Kalshi Bot's sandboxed container. Nothing is sent
   - the alerts and the activity log.
 
 Your settings and the saved market download are kept, so the model retrains from Kalshi's full market history in seconds. Paste the CSV into a spreadsheet or text file if you want to keep the old log.
+
+- **Erase Everything, Including Settings…** asks a second time, then deletes everything Kalshi Bot has stored: everything above, plus every setting (trading style, call time, stake, stop-loss and take-profit, and the rest), the Reversal Risk calibration and live check, and the saved market download. The app then relaunches as if newly installed, with default settings, and downloads Kalshi's full market history again (a few minutes). Choose **Copy Log, Erase and Relaunch** to keep a CSV of the prediction log on the clipboard.
 
 The saved market download (`MarketHistory.v1.json`) lives in the app's Caches folder. It holds only public market data, and macOS may clear it to free space; the next rebuild then downloads it again.
 
