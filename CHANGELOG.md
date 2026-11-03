@@ -5,6 +5,24 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.19.2] — 2026-11-03 · Build 37
+
+### Changed
+- License, section 4 (in `LICENSE` and the About window): "Predictions are probabilistic
+  and are frequently wrong" now reads "Predictions are probabilistic and will sometimes
+  be wrong."
+
+## [2.19.1] — 2026-11-03 · Build 36
+
+### Changed
+- Disclaimer wording in the About window, README, manual and brochure: "predictions are
+  often wrong" is replaced by what the numbers mean — every call is a probability, so a
+  70% call is expected to miss about 3 times in 10. The calls are calibrated, which the
+  old wording misrepresented.
+- The README's "What to expect", the brochure's calibration panel and the known issues
+  describe Kalshi's price as the benchmark every signal must beat on unseen windows,
+  rather than as something the bot fails at.
+
 ## [2.19.0] — 2026-11-03 · Build 35
 
 ### Added

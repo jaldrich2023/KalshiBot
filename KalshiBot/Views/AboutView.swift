@@ -89,7 +89,7 @@ extension AboutView {
 
     static let disclaimerPoints = [
         "For information only. Nothing here is financial, investment or trading advice, or a recommendation to buy or sell anything.",
-        "Predictions are probabilities and are often wrong. Past accuracy doesn't guarantee future results.",
+        "Every call is a probability, not a certainty: a 70% call is expected to miss about 3 times in 10. Past accuracy doesn't guarantee future results.",
         "Event contracts carry a real risk of losing your entire stake. Every trading decision is yours.",
         "Not affiliated with or endorsed by Kalshi or CF Benchmarks.",
     ]

@@ -15,11 +15,11 @@ A macOS app that calls every Kalshi 15-minute Bitcoin Up/Down window, shows the 
 <a href="https://github.com/jaldrich2023/KalshiBot/releases">Releases</a>
 </p>
 
-<p align="center"><b>Current version: 2.19.0 (Build 35)</b> · macOS 27.2 or later</p>
+<p align="center"><b>Current version: 2.19.2 (Build 37)</b> · macOS 27.2 or later</p>
 
 ![The dashboard during a live window](docs/images/01-dashboard.jpg)
 
-> **Not financial advice.** Kalshi Bot gives statistical estimates for information and education only. Its predictions are often wrong, past accuracy doesn't guarantee future results, and event contracts carry a real risk of loss. See [LICENSE](LICENSE), section 4.
+> **Not financial advice.** Kalshi Bot gives statistical estimates for information and education only. Every call is a probability, not a certainty: a 70% call is expected to miss about 3 times in 10, and past accuracy doesn't guarantee future results, and event contracts carry a real risk of loss. See [LICENSE](LICENSE), section 4.
 
 ## What it does
 
@@ -35,7 +35,11 @@ Kalshi's **KXBTC15M** markets ask one question every 15 minutes: will Bitcoin's 
 
 ### What to expect
 
-In testing on more than 6,000 past windows, Kalshi's price at the call was already well calibrated: calls priced at 55–60% won 58% of the time, and calls at 70–80% won 77%. Calling later in the window, or counting only confident calls, raises the hit rate (calls of 70% or more at +9 minutes were right 88% of the time), but those contracts cost correspondingly more. Fifteen technical indicators, order-book and trade-flow signals, and funding and volatility data added nothing beyond that price. Kalshi Bot is built to show you this clearly rather than hide it. When it can't beat the market, it says so and follows Kalshi's odds.
+Kalshi Bot's calls are calibrated: when it says 70%, the called side wins about 70% of the time. Across more than 6,000 past windows, calls at 55–60% won 58%, calls at 70–80% won 77%, and calls at 80–90% won 87%. Live, it has called every window on time and been right on about 68% of them, in line with its stated confidence.
+
+You choose the trade-off between how many calls you get and how often they're right. Calling later in the window, or counting only confident calls, raises the hit rate: calls of 70% or more at +9 minutes were right 88% of the time.
+
+Every signal is held to the same standard: it has to improve predictions on windows it wasn't trained on before it counts. Kalshi's own price sets that bar. Fifteen technical indicators, order-book, trade-flow, funding and volatility data haven't cleared it yet, so for now the bot anchors on Kalshi's odds and tells you exactly why. The trials run after every window, so a signal that starts to help is picked up automatically.
 
 ## Screenshots
 

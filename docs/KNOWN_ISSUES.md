@@ -1,10 +1,10 @@
 # Known issues and limitations
 
-These are known, documented limitations of Kalshi Bot 2.19.0. They aren't treated as bugs.
+These are known, documented limitations of Kalshi Bot 2.19.2. They aren't treated as bugs.
 
 ## Predictions
 
-- **The bot doesn't beat Kalshi's price.** Every signal tested so far adds nothing on held-out windows beyond Kalshi's price at the call, so the bot usually follows Kalshi's odds and its accuracy matches the market's. See the User Manual, chapter 5.
+- **The bot's calls track Kalshi's price.** No signal tested so far has improved on Kalshi's price at the call on held-out windows, so the bot anchors on Kalshi's odds and its accuracy matches the market's. Signals keep being trialled after every window. See the User Manual, chapter 5.
 - **Low-confidence calls lose often.** Calls at 55–60% are right about 58% of the time. That's correct calibration, not a fault. New installs skip calls under 60% (**Calls › Only ≥60% confident**).
 - **"Use Kalshi odds" off is much less accurate.** With it off, the model uses price signals alone; the Strategy card shows a warning.
 

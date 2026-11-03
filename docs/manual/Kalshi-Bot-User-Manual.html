@@ -23,7 +23,7 @@
   </div>
   <h1 class="cover-title">User Manual</h1>
   <p class="cover-tag">Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.</p>
-  <p class="cover-meta">Version 2.19.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC</p>
+  <p class="cover-meta">Version 2.19.2 · macOS 27.2 or later · © 2026 I'm The Team, LLC</p>
   <figure class="cover-shot glass-frame"><img src="../images/01-dashboard.jpg" alt="The dashboard during a live window"></figure>
   <p class="cover-lede">Kalshi Bot follows every Kalshi KXBTC15M window. It makes a call at the minute you choose, shows you the live market and the evidence behind the call, suggests entries and exits for your trading style, and scores every result against Kalshi's own price. This manual explains every card, chart and setting.</p>
   <p class="cover-foot">© 2026 I'm The Team, LLC · github.com/jaldrich2023/KalshiBot</p>
@@ -38,7 +38,7 @@
 <section class="chapter" id="1-getting-started">
 <div class="chapter-head"><span class="num">01</span><h2>Getting started</h2></div>
 <h3 id="before-you-begin">Before you begin</h3>
-<div class="callout"><p><strong>Kalshi Bot isn't financial advice.</strong> It gives statistical estimates for information and education only. Its predictions are often wrong, past accuracy doesn't guarantee future results, and event contracts carry a real risk of loss. You're responsible for your own trading decisions.</p></div>
+<div class="callout"><p><strong>Kalshi Bot isn't financial advice.</strong> It gives statistical estimates for information and education only. Every call is a probability, not a certainty: a 70% call is expected to miss about 3 times in 10, and past accuracy doesn't guarantee future results, and event contracts carry a real risk of loss. You're responsible for your own trading decisions.</p></div>
 <p>You need:</p>
 <ul><li>a Mac running macOS 27.2 or later,</li><li>an internet connection.</li></ul>
 <p>You don't need a Kalshi account or any API keys. Kalshi Bot reads only public market data, and it <strong>never places orders</strong>. Any trade you make, you make yourself on Kalshi.</p>
@@ -309,14 +309,14 @@
 <div class="faq"><p class="q">The bot recommends a side that the market clearly disagrees with.</p><p>Check that <strong>Use Kalshi odds</strong> is on. With it off, the model uses price signals alone and can disagree with the market for no good reason.</p></div>
 <div class="faq"><p class="q">My 55–60% calls keep losing.</p><p>That's expected: a 57% call loses about 43% of the time. <strong>Calls</strong> skips calls under 60% by default; raise it to skip more.</p></div>
 <div class="faq"><p class="q">Fewer than 10 sources are live.</p><p>A source is dropped when its feed goes stale or its price is more than 0.05% away from the others; the list shows how long it's been out. The composite needs only a few sources. Dropped streams reconnect on their own, and a stream that goes silent for 30 seconds is replaced automatically.</p></div>
-<div class="faq"><p class="q">The Model card says learned adjustments haven't beaten Kalshi's odds.</p><p>That's the normal state. It means the bot is following Kalshi's price, which no tested signal has beaten.</p></div>
+<div class="faq"><p class="q">The Model card says learned adjustments haven't beaten Kalshi's odds.</p><p>That's the normal state. The bot anchors on Kalshi's well-calibrated price and adds a signal only once it proves itself on windows it wasn't trained on.</p></div>
 <div class="faq"><p class="q">The charts say "Collecting 60s of prices…".</p><p>The 60-second average needs a minute of prices after launch or after a gap in the feeds.</p></div>
 <div class="faq"><p class="q">The Model card has said "Rebuilding past windows…" for a long time.</p><p>The first download depends on Kalshi's and Coinbase's public APIs, which can be slow or limit requests. Leave the app running; failed requests are retried, and anything still missing is fetched at the next catch-up (every 15 minutes).</p></div>
 </section>
 <section class="chapter" id="12-legal">
 <div class="chapter-head"><span class="num">12</span><h2>Legal</h2></div>
 <p>Kalshi Bot is licensed, not sold, under the end user license agreement in <a href="https://github.com/jaldrich2023/KalshiBot/blob/main/LICENSE">LICENSE</a>. Its source code is public to read, but reading it gives you no right to copy, modify or redistribute it.</p>
-<p>Kalshi Bot isn't financial advice. Its predictions are probabilistic and often wrong, and event contracts and digital assets involve a substantial risk of loss.</p>
+<p>Kalshi Bot isn't financial advice. Its calls are probabilities, not certainties, and event contracts and digital assets involve a substantial risk of loss.</p>
 <p>Kalshi, CF Benchmarks, BRTI and the exchange names are trademarks of their respective owners. Kalshi Bot's BRTI estimate is an independent approximation, not the official index. I'm The Team, LLC isn't affiliated with, endorsed by or sponsored by any of them.</p>
 </section>
 </div>

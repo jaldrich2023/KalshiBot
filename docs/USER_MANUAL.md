@@ -2,7 +2,7 @@
 
 Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.
 
-Version 2.19.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC
+Version 2.19.2 · macOS 27.2 or later · © 2026 I'm The Team, LLC
 
 ![The dashboard during a live window](images/01-dashboard.jpg)
 
@@ -16,7 +16,7 @@ Kalshi Bot follows every Kalshi KXBTC15M window. It makes a call at the minute y
 
 ### Before you begin
 
-> **Kalshi Bot isn't financial advice.** It gives statistical estimates for information and education only. Its predictions are often wrong, past accuracy doesn't guarantee future results, and event contracts carry a real risk of loss. You're responsible for your own trading decisions.
+> **Kalshi Bot isn't financial advice.** It gives statistical estimates for information and education only. Every call is a probability, not a certainty: a 70% call is expected to miss about 3 times in 10, and past accuracy doesn't guarantee future results, and event contracts carry a real risk of loss. You're responsible for your own trading decisions.
 
 You need:
 
@@ -308,7 +308,7 @@ The saved market download (`MarketHistory.v1.json`) lives in the app's Caches fo
 
 **Fewer than 10 sources are live.** A source is dropped when its feed goes stale or its price is more than 0.05% away from the others; the list shows how long it's been out. The composite needs only a few sources. Dropped streams reconnect on their own, and a stream that goes silent for 30 seconds is replaced automatically.
 
-**The Model card says learned adjustments haven't beaten Kalshi's odds.** That's the normal state. It means the bot is following Kalshi's price, which no tested signal has beaten.
+**The Model card says learned adjustments haven't beaten Kalshi's odds.** That's the normal state. The bot anchors on Kalshi's well-calibrated price and adds a signal only once it proves itself on windows it wasn't trained on.
 
 **The charts say "Collecting 60s of prices…".** The 60-second average needs a minute of prices after launch or after a gap in the feeds.
 
@@ -318,6 +318,6 @@ The saved market download (`MarketHistory.v1.json`) lives in the app's Caches fo
 
 Kalshi Bot is licensed, not sold, under the end user license agreement in [LICENSE](../LICENSE). Its source code is public to read, but reading it gives you no right to copy, modify or redistribute it.
 
-Kalshi Bot isn't financial advice. Its predictions are probabilistic and often wrong, and event contracts and digital assets involve a substantial risk of loss.
+Kalshi Bot isn't financial advice. Its calls are probabilities, not certainties, and event contracts and digital assets involve a substantial risk of loss.
 
 Kalshi, CF Benchmarks, BRTI and the exchange names are trademarks of their respective owners. Kalshi Bot's BRTI estimate is an independent approximation, not the official index. I'm The Team, LLC isn't affiliated with, endorsed by or sponsored by any of them.
