@@ -25,7 +25,7 @@ struct AboutView: View {
                     .accessibilityHidden(true)
                 Text("Kalshi Bot")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
-                Text("John Aldrich")
+                Text("I'm The Team, LLC")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Text("Version \(version.marketing) · Build \(version.build)")

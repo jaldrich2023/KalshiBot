@@ -25,7 +25,7 @@ A macOS app that calls every Kalshi 15-minute Bitcoin Up/Down window, shows the 
 
 <p align="center"><a href="https://github.com/jaldrich2023/KalshiBot/releases/latest"><b>⬇︎ Download the latest version</b></a> · <a href="docs/INSTALL.md">Install guide</a></p>
 
-<p align="center"><b>Current version: 2.24.0 (Build 44)</b> · macOS 27.2 or later</p>
+<p align="center"><b>Current version: 2.24.1 (Build 45)</b> · macOS 27.2 or later</p>
 
 ![The dashboard during a live window](docs/images/01-dashboard.jpg)
 
@@ -111,6 +111,6 @@ Kalshi Bot is open source under the MIT License. Bug reports, feature requests a
 
 ## License
 
-Copyright © 2026 John Aldrich. Kalshi Bot is free and open-source software under the [MIT License](LICENSE): you may use, copy, modify and distribute it, provided the copyright notice and license are included. It comes with no warranty.
+Copyright © 2026 I'm The Team, LLC. Kalshi Bot is free and open-source software under the [MIT License](LICENSE): you may use, copy, modify and distribute it, provided the copyright notice and license are included. It comes with no warranty.
 
 Please also read the [disclaimer](DISCLAIMER.md): Kalshi Bot isn't financial advice. Kalshi, CF Benchmarks, BRTI and the exchange names are trademarks of their respective owners, and Kalshi Bot isn't affiliated with, endorsed by or sponsored by any of them.

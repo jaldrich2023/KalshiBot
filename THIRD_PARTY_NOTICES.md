@@ -23,7 +23,7 @@ Kalshi Bot reads publicly available data from the services below. It doesn't use
 
 Kalshi is a trademark of KalshiEX LLC. CF Benchmarks and BRTI (CF Bitcoin Real Time Index) are trademarks of CF Benchmarks Ltd. Coinbase, Kraken, Bitstamp, Gemini, Crypto.com, Binance.US, Deribit, OKX and KuCoin are trademarks of their respective owners.
 
-Kalshi Bot's BRTI estimate is an independent approximation made from public exchange prices. It isn't the official index. Kalshi Bot and its author aren't affiliated with, endorsed by or sponsored by any of these companies.
+Kalshi Bot's BRTI estimate is an independent approximation made from public exchange prices. It isn't the official index. Kalshi Bot and I'm The Team, LLC aren't affiliated with, endorsed by or sponsored by any of these companies.
 
 ## Artwork
 

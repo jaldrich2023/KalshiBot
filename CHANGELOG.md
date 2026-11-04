@@ -5,6 +5,14 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.24.1] — 2026-11-03 · Build 45
+
+### Changed
+- **Kalshi Bot's copyright holder and author is now I'm The Team, LLC.** The MIT License
+  reads "Copyright (c) 2026 I'm The Team, LLC", and the About window, the app's copyright
+  notice, the README, the user manual, the brochure and the disclaimer name the company.
+  The license itself is unchanged: Kalshi Bot is still free and open source under MIT.
+
 ## [2.24.0] — 2026-11-03 · Build 44
 
 ### Added

@@ -17,7 +17,7 @@ Each [GitHub Release](https://github.com/jaldrich2023/KalshiBot/releases) includ
 2. Optional but recommended: check that the file is intact. Open **Terminal** and run:
 
    ```
-   shasum -a 256 ~/Downloads/KalshiBot-2.24.0-macOS.zip
+   shasum -a 256 ~/Downloads/KalshiBot-2.24.1-macOS.zip
    ```
 
    The result should match the checksum in the release notes, which is also attached as `KalshiBot-<version>-macOS.zip.sha256`.

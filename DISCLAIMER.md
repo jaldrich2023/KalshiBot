@@ -10,10 +10,10 @@ Predictions are probabilistic and will sometimes be wrong. Past accuracy doesn't
 
 ## Third-party data and services
 
-Kalshi Bot reads publicly available data from third-party services: Kalshi, Coinbase, Kraken, Bitstamp, Gemini, Crypto.com, Binance.US, Deribit, OKX and KuCoin. The author doesn't control these services and doesn't guarantee the accuracy, completeness, timeliness or availability of their data. Your use of them is subject to their own terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Kalshi Bot reads publicly available data from third-party services: Kalshi, Coinbase, Kraken, Bitstamp, Gemini, Crypto.com, Binance.US, Deribit, OKX and KuCoin. I'm The Team, LLC doesn't control these services and doesn't guarantee the accuracy, completeness, timeliness or availability of their data. Your use of them is subject to their own terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Kalshi Bot's estimate of the CF Benchmarks Bitcoin Real Time Index (BRTI) is an independent approximation made from public exchange prices. It isn't the official index.
 
 ## Trademarks
 
-Kalshi, CF Benchmarks, BRTI and the names of the exchanges above are trademarks of their respective owners. Kalshi Bot and its author aren't affiliated with, endorsed by or sponsored by any of them.
+Kalshi, CF Benchmarks, BRTI and the names of the exchanges above are trademarks of their respective owners. Kalshi Bot and I'm The Team, LLC aren't affiliated with, endorsed by or sponsored by any of them.
