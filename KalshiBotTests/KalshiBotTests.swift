@@ -1529,3 +1529,629 @@ struct CallsLikeThisTests {
         #expect(BotEngine.CallPreset.standard.minutes == 3 && BotEngine.CallPreset.standard.confidence == 0.60)
     }
 }
+
+// MARK: - Install notice
+
+/// Stands in for the network: replies with the queued results in order and records
+/// every request.
+final class StubInstallTransport: BackendTransport, @unchecked Sendable {
+    enum Reply { case status(Int, String = "{}"), failure }
+    private let lock = NSLock()
+    private var replies: [Reply]
+    private(set) var requests: [URLRequest] = []
+
+    init(_ replies: [Reply]) { self.replies = replies }
+
+    var count: Int { lock.withLock { requests.count } }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let reply = lock.withLock { () -> Reply in
+            requests.append(request)
+            return replies.isEmpty ? .status(200) : replies.removeFirst()
+        }
+        switch reply {
+        case .failure:
+            throw URLError(.notConnectedToInternet)
+        case let .status(code, body):
+            let response = HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: nil)!
+            return (Data(body.utf8), response)
+        }
+    }
+}
+
+@MainActor
+struct InstallReporterTests {
+    private let defaults: UserDefaults
+    private let device = DeviceInfo(osVersion: "macOS 27.2", model: "Mac16,10", locale: "en_US", timeZone: "America/Chicago")
+
+    init() {
+        defaults = UserDefaults(suiteName: "InstallReporterTests.\(UUID().uuidString)")!
+    }
+
+    private func reporter(_ transport: StubInstallTransport, version: String = "2.25.0", key: String = "itt_test",
+                          now: Date = Date(timeIntervalSince1970: 1_762_200_000)) -> InstallReporter {
+        InstallReporter(defaults: defaults,
+                        config: BackendConfig(baseURL: URL(string: "https://example.test")!, apiKey: key),
+                        transport: transport,
+                        version: AppVersion(marketing: version, build: "46", copyright: ""),
+                        device: device, now: { now })
+    }
+
+    @Test func pingsAgainAfterThirtyDaysButNotBefore() async {
+        let start = Date(timeIntervalSince1970: 1_762_200_000)
+        let transport = StubInstallTransport([.status(201), .status(200)])
+        #expect(await reporter(transport, now: start).reportIfNeeded() == .reported(firstRun: true))
+        #expect(defaults.object(forKey: InstallReporter.Keys.lastPing) as? Date == start)
+
+        // 29 days later: not yet.
+        #expect(await reporter(transport, now: start.addingTimeInterval(29 * 86_400)).reportIfNeeded() == .skipped)
+        // 30 days later: once more, then the interval starts again.
+        let later = start.addingTimeInterval(30 * 86_400)
+        #expect(await reporter(transport, now: later).reportIfNeeded() == .reported(firstRun: false))
+        #expect(defaults.object(forKey: InstallReporter.Keys.lastPing) as? Date == later)
+        #expect(await reporter(transport, now: later.addingTimeInterval(86_400)).reportIfNeeded() == .skipped)
+        #expect(transport.count == 2)
+    }
+
+    @Test func theTimeZoneIsTheMachinesIANAIdentifier() {
+        let zone = DeviceInfo.current.timeZone
+        #expect(zone == TimeZone.current.identifier)
+        #expect(TimeZone(identifier: zone) != nil)
+        #expect(zone.contains("/") || ["UTC", "GMT"].contains(zone))
+    }
+
+    @Test func installIDIsARandomUUIDKeptAcrossLaunches() throws {
+        let first = reporter(StubInstallTransport([])).installID
+        let again = reporter(StubInstallTransport([])).installID
+        #expect(first == again)
+        let uuid = try #require(UUID(uuidString: first))
+        #expect(uuid.uuidString.lowercased() == first)
+        // Version 4: the 13th hex digit is "4".
+        #expect(Array(first.replacingOccurrences(of: "-", with: ""))[12] == "4")
+        #expect(defaults.string(forKey: InstallReporter.Keys.installID) == first)
+    }
+
+    @Test func sendsTheDocumentedRequest() async throws {
+        let transport = StubInstallTransport([.status(201, #"{"ok":true,"first_run":true,"latest":null}"#)])
+        let outcome = await reporter(transport).reportIfNeeded()
+        #expect(outcome == .reported(firstRun: true))
+
+        let request = try #require(transport.requests.first)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.absoluteString == "https://example.test/api/v1/installs")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+        #expect(request.value(forHTTPHeaderField: "X-API-Key") == "itt_test")
+        #expect(request.timeoutInterval == 10)
+        let body = try #require(request.httpBody)
+        let payload = try JSONDecoder().decode(InstallPingPayload.self, from: body)
+        #expect(payload == InstallPingPayload(installID: defaults.string(forKey: InstallReporter.Keys.installID)!,
+                                              appVersion: "2.25.0", appBuild: "46", osVersion: "macOS 27.2",
+                                              device: "Mac16,10", locale: "en_US", timezone: "America/Chicago",
+                                              channel: "stable"))
+        // The wire names are snake_case, as the endpoint expects.
+        let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: String])
+        #expect(Set(json.keys) == ["install_id", "app_version", "app_build", "os_version", "device", "locale", "timezone", "channel"])
+        // No IP address or location is sent; the server derives that from the connection.
+        #expect(json["timezone"] == "America/Chicago")
+    }
+
+    @Test func pingsOnlyOnTheFirstRun() async {
+        let transport = StubInstallTransport([.status(201)])
+        #expect(await reporter(transport).reportIfNeeded() == .reported(firstRun: true))
+        #expect(defaults.bool(forKey: InstallReporter.Keys.reported))
+        #expect(defaults.string(forKey: InstallReporter.Keys.reportedVersion) == "2.25.0")
+
+        // Later launches of the same version send nothing.
+        #expect(await reporter(transport).reportIfNeeded() == .skipped)
+        #expect(await reporter(transport).reportIfNeeded() == .skipped)
+        #expect(transport.count == 1)
+    }
+
+    @Test func pingsOnceMoreAfterAVersionChange() async {
+        let transport = StubInstallTransport([.status(201), .status(200)])
+        await reporter(transport, version: "2.25.0").reportIfNeeded()
+        #expect(await reporter(transport, version: "2.26.0").reportIfNeeded() == .reported(firstRun: false))
+        #expect(defaults.string(forKey: InstallReporter.Keys.reportedVersion) == "2.26.0")
+        #expect(await reporter(transport, version: "2.26.0").reportIfNeeded() == .skipped)
+        #expect(transport.count == 2)
+    }
+
+    @Test(arguments: [StubInstallTransport.Reply.failure, .status(500), .status(503), .status(429)])
+    func failuresRetryOnTheNextLaunchNotInALoop(_ reply: StubInstallTransport.Reply) async {
+        let transport = StubInstallTransport([reply, .status(201)])
+        let launch = reporter(transport)
+        #expect(await launch.reportIfNeeded() == .retryLater)
+        #expect(!defaults.bool(forKey: InstallReporter.Keys.reported))
+        // At most once per launch.
+        #expect(await launch.reportIfNeeded() == .skipped)
+        #expect(transport.count == 1)
+        // The next launch tries again.
+        #expect(await reporter(transport).reportIfNeeded() == .reported(firstRun: true))
+        #expect(transport.count == 2)
+    }
+
+    @Test func aRejectedKeyIsNotRetried() async {
+        let transport = StubInstallTransport([.status(401)])
+        #expect(await reporter(transport).reportIfNeeded() == .rejected(status: 401))
+        #expect(defaults.bool(forKey: InstallReporter.Keys.reported))
+        #expect(await reporter(transport).reportIfNeeded() == .skipped)
+        #expect(transport.count == 1)
+    }
+
+    @Test(arguments: ["", "   ", "itt_<generate the key above and paste it here>"])
+    func nothingIsSentWithoutAKey(_ key: String) async {
+        let transport = StubInstallTransport([])
+        let config = BackendConfig(baseURL: BackendConfig.defaultBaseURL, apiKey: key.trimmingCharacters(in: .whitespaces))
+        let reporter = InstallReporter(defaults: defaults, config: config, transport: transport,
+                                       version: AppVersion(marketing: "2.25.0", build: "46", copyright: ""), device: device)
+        #expect(await reporter.reportIfNeeded() == .skipped)
+        #expect(transport.count == 0)
+        #expect(!defaults.bool(forKey: InstallReporter.Keys.reported))
+    }
+
+    @Test func nothingIsSentWithTelemetryOff() async {
+        defaults.set(false, forKey: InstallReporter.Keys.telemetryEnabled)
+        let transport = StubInstallTransport([])
+        #expect(await reporter(transport).reportIfNeeded() == .skipped)
+        #expect(transport.count == 0)
+    }
+
+    @Test func theReplysNewerReleaseIsPassedToTheUpdateChecker() async throws {
+        let updates = UpdateChecker(defaults: defaults, config: BackendConfig(baseURL: URL(string: "https://example.test")!, apiKey: ""),
+                                    transport: StubInstallTransport([]), version: AppVersion(marketing: "2.25.0", build: "46", copyright: ""))
+        let body = #"{"ok":true,"first_run":true,"latest":{"version":"2.26.0","build":47,"title":"Kalshi Bot 2.26.0","download_url":"https://example.test/dl","checksum":"abc","min_os":"27.2","released_at":"2026-11-10T00:00:00Z"}}"#
+        let reporter = InstallReporter(defaults: defaults, config: BackendConfig(baseURL: URL(string: "https://example.test")!, apiKey: "itt_test"),
+                                       transport: StubInstallTransport([.status(201, body)]),
+                                       version: AppVersion(marketing: "2.25.0", build: "46", copyright: ""), device: device, updates: updates)
+        await reporter.reportIfNeeded()
+        let update = try #require(updates.availableUpdate)
+        #expect(update.version == "2.26.0")
+        #expect(update.build == "47")
+        #expect(update.downloadURL == URL(string: "https://example.test/dl"))
+    }
+}
+
+// MARK: - Crash reports
+
+/// Serialized: crash capture keeps process-wide state.
+@MainActor @Suite(.serialized)
+struct CrashReportTests {
+    private let defaults = UserDefaults(suiteName: "CrashReportTests.\(UUID().uuidString)")!
+    private let device = DeviceInfo(osVersion: "macOS 27.2", model: "Mac16,10", locale: "en_US", timeZone: "America/Chicago")
+    private let version = AppVersion(marketing: "2.26.0", build: "47", copyright: "")
+
+    private func tempDirectory() -> URL {
+        let url = FileManager.default.temporaryDirectory.appending(path: "CrashReportTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func crashFiles(in directory: URL) -> [URL] {
+        ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    /// An exception-style record whose stack is already symbolicated.
+    private func record(type: String = "NSInvalidArgumentException", symbols: [String]? = nil, logFile: URL? = nil,
+                        timestamp: Int = 1_762_200_000) -> CrashRecord {
+        CrashRecord(source: "exception", exceptionType: type, signalName: nil, message: "bad argument",
+                    timestamp: timestamp, uptimeSeconds: 42, thread: "main", frames: [],
+                    symbols: symbols ?? [
+                        "0   CoreFoundation   0x0000000190a1c2ec __exceptionPreprocess + 176",
+                        "1   KalshiBot        0x0000000102f3c8a4 KalshiBot.LivePriceFeed.reconnect() + 132",
+                        "2   KalshiBot        0x0000000102f3d000 KalshiBot.LivePriceFeed.run() + 40",
+                    ],
+                    appVersion: "2.26.0", appBuild: "47", imageBase: "0x0", imageSize: 0, imageUUID: "",
+                    bootTime: 0, logFile: logFile?.path)
+    }
+
+    private func write(_ record: CrashRecord, to directory: URL, name: String? = nil) throws {
+        let url = directory.appending(path: name ?? "\(record.timestamp)-exception.json")
+        try JSONEncoder().encode(record).write(to: url)
+    }
+
+    private func client(_ transport: StubInstallTransport, outbox: URL, key: String = "itt_test") -> ReportClient {
+        ReportClient(config: BackendConfig(baseURL: URL(string: "https://example.test")!, apiKey: key), transport: transport,
+                     defaults: defaults, version: version, device: device, outbox: outbox)
+    }
+
+    private func collector(_ directory: URL) -> CrashReports {
+        CrashReports(directory: directory, defaults: defaults, device: device, settings: { ["call_delay_minutes": "3"] })
+    }
+
+    @Test func signalCrashFileHasTheExpectedFields() throws {
+        let directory = tempDirectory()
+        let log = directory.appending(path: "launch.log")
+        CrashCapture.install(directory: directory, version: version, logFile: log, installHandlers: false)
+        CrashCapture.recordSignal(SIGSEGV, faultAddress: 0x10)
+
+        let file = try #require(crashFiles(in: directory).first)
+        #expect(file.lastPathComponent.hasSuffix("-\(SIGSEGV).json"))
+        let record = try JSONDecoder().decode(CrashRecord.self, from: Data(contentsOf: file))
+        #expect(record.source == "signal")
+        #expect(record.exceptionType == "EXC_BAD_ACCESS")
+        #expect(record.signalName == "SIGSEGV")
+        #expect(record.message == "Bad memory access at 0x10")
+        #expect(record.thread == "main")
+        #expect(record.uptimeSeconds >= 0)
+        #expect(abs(record.timestamp - Int(Date().timeIntervalSince1970)) < 60)
+        #expect(!record.frames.isEmpty)
+        #expect(record.frames.allSatisfy { $0.hasPrefix("0x") })
+        #expect(record.appVersion == "2.26.0" && record.appBuild == "47")
+        #expect(record.imageUUID == MainImage.current.uuid && !record.imageUUID.isEmpty)
+        #expect(record.logFile == log.path)
+        // No half-written file is left behind.
+        #expect(((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []).allSatisfy { !$0.hasSuffix(".tmp") })
+    }
+
+    @Test func exceptionCrashFileKeepsTheSymbols() throws {
+        let directory = tempDirectory()
+        CrashCapture.install(directory: directory, version: version, logFile: nil, installHandlers: false)
+        CrashCapture.recordException(name: "NSRangeException", reason: "index 3 beyond bounds",
+                                     addresses: [0x1000, 0x2000], symbols: ["0 KalshiBot 0x1000 foo + 4"])
+        let file = try #require(crashFiles(in: directory).first)
+        let record = try JSONDecoder().decode(CrashRecord.self, from: Data(contentsOf: file))
+        #expect(record.source == "exception")
+        #expect(record.exceptionType == "NSRangeException")
+        #expect(record.message == "index 3 beyond bounds")
+        #expect(record.frames == ["0x1000", "0x2000"])
+        #expect(record.symbols == ["0 KalshiBot 0x1000 foo + 4"])
+    }
+
+    @Test func fingerprintIgnoresAddressesAndSeparatesExceptionTypes() {
+        // The same crash in two launches: the app loaded at different addresses, the
+        // frames at the same offsets into it.
+        let offsets: [UInt] = [0x1200, 0x3400, 0x5600]
+        func signalRecord(base: UInt, type: String) -> CrashRecord {
+            CrashRecord(source: "signal", exceptionType: type, signalName: "SIGSEGV", message: nil, timestamp: 0,
+                        uptimeSeconds: 1, thread: "main", frames: offsets.map { "0x" + String(base + $0, radix: 16) },
+                        symbols: nil, appVersion: "2.26.0", appBuild: "47", imageBase: "0x" + String(base, radix: 16),
+                        imageSize: 0x100000, imageUUID: "OLD-BUILD", bootTime: 1, logFile: nil)
+        }
+        let current = MainImage(base: 0x7000_0000_0000, size: 0x100000, uuid: "NEW-BUILD")
+        func fingerprintOf(_ r: CrashRecord) -> String {
+            CrashReportBuilder.fingerprint(exceptionType: r.exceptionType,
+                                           frames: CrashReportBuilder.frames(for: r, current: current, bootTime: 2))
+        }
+        let first = fingerprintOf(signalRecord(base: 0x1_0000_0000, type: "EXC_BAD_ACCESS"))
+        let second = fingerprintOf(signalRecord(base: 0x1_2340_0000, type: "EXC_BAD_ACCESS"))
+        #expect(first == second)
+        #expect(first.count == 64)
+        #expect(fingerprintOf(signalRecord(base: 0x1_0000_0000, type: "EXC_BREAKPOINT")) != first)
+
+        // Symbolicated stacks: offsets within functions don't matter.
+        let a = CrashReportBuilder.build(record: record(), installID: "id", device: device, settings: [:])
+        let b = CrashReportBuilder.build(record: record(symbols: [
+            "0   CoreFoundation   0x0000000190a1c000 __exceptionPreprocess + 8",
+            "1   KalshiBot        0x0000000104000000 KalshiBot.LivePriceFeed.reconnect() + 999",
+            "2   KalshiBot        0x0000000104000100 KalshiBot.LivePriceFeed.run() + 1",
+        ]), installID: "id", device: device, settings: [:])
+        #expect(a.fingerprint == b.fingerprint)
+        #expect(CrashReportBuilder.build(record: record(type: "NSRangeException"), installID: "id", device: device, settings: [:]).fingerprint
+                != a.fingerprint)
+    }
+
+    @Test func reportNamesTheInnermostAppFrameAndJudgesSeverity() {
+        let report = CrashReportBuilder.build(record: record(), installID: "id", device: device, settings: ["k": "v"])
+        #expect(report.title == "NSInvalidArgumentException in LivePriceFeed.reconnect()")
+        #expect(report.severity == .high)
+        #expect(report.kind == .crash)
+        #expect(report.description?.contains("LivePriceFeed.run()") == true)
+        #expect(report.metadata?["uptime_seconds"] == .number(42))
+        #expect(report.metadata?["thread"] == .string("main"))
+        #expect(report.metadata?["settings"] == .object(["k": .string("v")]))
+
+        let saving = CrashReportBuilder.build(record: record(symbols: ["0   KalshiBot   0x1 KalshiBot.HistoryCache.save(_:) + 4"]),
+                                              installID: "id", device: device, settings: [:])
+        #expect(saving.severity == .critical)
+    }
+
+    @Test func secretsAndPersonalDetailsAreScrubbed() {
+        let text = """
+            X-API-Key: itt_kalshibot_abcdefghijklmnop
+            Authorization: Bearer eyJhbGciOi.payload.sig
+            password=hunter2 token: "abc123"
+            mail jane.doe@example.com about it
+            opened /Users/tester/Library/Containers/app/Data/file.json for tester
+            """
+        let clean = Scrubber.scrub(text, home: "/Users/tester", userName: "tester")
+        for secret in ["abcdefghijklmnop", "eyJhbGciOi", "hunter2", "abc123", "jane.doe@example.com", "/Users/tester", "for tester"] {
+            #expect(!clean.contains(secret), "still contains \(secret)")
+        }
+        #expect(clean.contains("~/Library/Containers"))
+        #expect(clean.contains("[EMAIL]"))
+    }
+
+    @Test func logsAreTheScrubbedTailOfTheCrashedLaunch() throws {
+        let directory = tempDirectory()
+        let log = directory.appending(path: "launch.log")
+        let lines = (1...400).map { "line \($0)" } + ["key itt_kalshibot_secretsecretsecret"]
+        try lines.joined(separator: "\n").write(to: log, atomically: true, encoding: .utf8)
+        let report = CrashReportBuilder.build(record: record(logFile: log), installID: "id", device: device, settings: [:])
+        let logs = report.logs ?? ""
+        let sent = logs.split(separator: "\n")
+        #expect(sent.count == 300)
+        #expect(sent.first == "line 102")
+        #expect(!logs.contains("secretsecret"))
+        #expect(logs.utf8.count <= 100_000)
+    }
+
+    @Test func crashesAreCollectedIntoTheOutboxOnlyWhenOptedIn() async throws {
+        let directory = tempDirectory(), outbox = tempDirectory()
+        try write(record(), to: directory)
+        let transport = StubInstallTransport([.status(201, #"{"ok":true,"id":"rep_1"}"#)])
+        let reports = client(transport, outbox: outbox)
+
+        // Off by default: nothing collected or sent; the crash file waits for the prompt.
+        #expect(ReportClient.automaticReportsEnabled(defaults) == false)
+        #expect(collector(directory).collect(into: reports) == 0)
+        #expect(await reports.flush().isEmpty)
+        #expect(transport.count == 0)
+        #expect(crashFiles(in: directory).count == 1)
+
+        // Opted in: collected, sent, and both files gone.
+        defaults.set(true, forKey: ReportClient.automaticReportsKey)
+        #expect(collector(directory).collect(into: reports) == 1)
+        #expect(crashFiles(in: directory).isEmpty)
+        #expect(await reports.flush(respectingBackoff: false) == [.sent(id: "rep_1")])
+        #expect(reports.queued().isEmpty)
+
+        let request = try #require(transport.requests.first)
+        #expect(request.url?.absoluteString == "https://example.test/api/v1/reports")
+        #expect(request.value(forHTTPHeaderField: "X-API-Key") == "itt_test")
+        #expect(request.timeoutInterval == 15)
+        let body = try #require(request.httpBody)
+        let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(json["kind"] as? String == "crash")
+        #expect(json["install_id"] as? String == InstallIdentity.id(in: defaults))
+        #expect((json["fingerprint"] as? String)?.count == 64)
+    }
+
+    @Test func choosingSendInThePromptSendsEvenWhenOff() throws {
+        let directory = tempDirectory(), outbox = tempDirectory()
+        try write(record(), to: directory)
+        let reports = client(StubInstallTransport([]), outbox: outbox)
+        #expect(collector(directory).collect(into: reports, force: true) == 1)
+        #expect(reports.queued().count == 1)
+
+        try write(record(), to: directory)
+        collector(directory).discardPending()
+        #expect(crashFiles(in: directory).isEmpty)
+    }
+
+    @Test func theCrashFolderIsCappedAtTwentyDroppingTheOldest() throws {
+        let directory = tempDirectory()
+        for i in 1...25 { try write(record(timestamp: 1_000 + i), to: directory) }
+        try Data("{".utf8).write(to: directory.appending(path: "1999-11.json.tmp"))
+        let pending = collector(directory).pendingFiles()
+        #expect(pending.count == 20)
+        #expect(pending.first?.lastPathComponent == "1006-exception.json")
+        #expect(crashFiles(in: directory).count == 20)
+        #expect(!FileManager.default.fileExists(atPath: directory.appending(path: "1999-11.json.tmp").path))
+    }
+
+    @Test func appLogKeepsTheLastLinesAndWritesThemToAFile() throws {
+        let directory = tempDirectory()
+        let log = AppLog(directory: directory)
+        log.start()
+        for i in 1...(AppLog.capacity + 20) { log.append("message \(i)") }
+        #expect(log.recentLines.count == AppLog.capacity)
+        #expect(log.recentLines.last?.hasSuffix("message \(AppLog.capacity + 20)") == true)
+        let url = try #require(log.fileURL)
+        let tail = AppLog.tail(of: url, lines: 3, maxBytes: 10_000)
+        #expect(tail.count == 3)
+        #expect(tail.last?.hasSuffix("message \(AppLog.capacity + 20)") == true)
+    }
+}
+
+// MARK: - Report client and outbox
+
+@MainActor
+struct ReportClientTests {
+    private let defaults = UserDefaults(suiteName: "ReportClientTests.\(UUID().uuidString)")!
+    private let device = DeviceInfo(osVersion: "macOS 27.2", model: "Mac16,10", locale: "en_US", timeZone: "America/Chicago")
+    private let outbox = FileManager.default.temporaryDirectory.appending(path: "ReportClientTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+
+    private func client(_ transport: StubInstallTransport, key: String = "itt_test", now: Date = Date(timeIntervalSince1970: 1_762_200_000)) -> ReportClient {
+        ReportClient(config: BackendConfig(baseURL: URL(string: "https://example.test")!, apiKey: key), transport: transport,
+                     defaults: defaults, version: AppVersion(marketing: "2.27.0", build: "48", copyright: ""),
+                     device: device, outbox: outbox, now: { now })
+    }
+
+    private func bug(_ title: String = "Chart freezes") -> Report {
+        Report(kind: .bug, title: title, description: "It stops updating.", logs: "line 1\nline 2")
+    }
+
+    @Test func encodesTheDocumentedJSON() throws {
+        let report = client(StubInstallTransport([])).prepared(
+            Report(kind: .feedback, severity: .low, title: "Nice", description: "Love it", contact: "me@example.com",
+                   logs: "x", fingerprint: "abc", metadata: ["n": .number(1), "flags": .object(["a": .bool(true)])]))
+        let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
+        #expect(json["kind"] as? String == "feedback")
+        #expect(json["severity"] as? String == "low")
+        #expect(json["title"] as? String == "Nice")
+        #expect(json["contact"] as? String == "me@example.com")
+        #expect(json["app_version"] as? String == "2.27.0")
+        #expect(json["app_build"] as? String == "48")
+        #expect(json["os_version"] as? String == "macOS 27.2")
+        #expect(json["device"] as? String == "Mac16,10")
+        #expect(json["locale"] as? String == "en_US")
+        #expect(json["install_id"] as? String == InstallIdentity.id(in: defaults))
+        #expect((json["metadata"] as? [String: Any])?["n"] as? Double == 1)
+        // Round trip.
+        #expect(try JSONDecoder().decode(Report.self, from: JSONEncoder().encode(report)) == report)
+    }
+
+    @Test func reportsAreCutToTheLimits() throws {
+        let long = Report(kind: .bug, title: String(repeating: "t", count: 500),
+                          description: String(repeating: "d", count: 30_000), contact: String(repeating: "c", count: 1_000),
+                          logs: (1...20_000).map { "log line \($0)" }.joined(separator: "\n"),
+                          metadata: ["blob": .string(String(repeating: "m", count: 40_000))])
+        let cut = long.truncated()
+        #expect(cut.title.count == Report.Limit.title)
+        #expect(cut.description?.count == Report.Limit.description)
+        #expect(cut.contact?.count == Report.Limit.contact)
+        let logs = try #require(cut.logs)
+        #expect(logs.utf8.count <= Report.Limit.logBytes)
+        #expect(logs.hasSuffix("log line 20000"))          // the newest lines are kept
+        #expect(logs.hasPrefix("log line "))               // starting on a whole line
+        #expect(cut.metadata?["truncated"] == .bool(true))
+        #expect(try JSONEncoder().encode(cut.metadata).count <= Report.Limit.metadataBytes)
+        // Small reports are untouched.
+        #expect(bug().truncated() == bug())
+    }
+
+    @Test func sentReportsReturnTheirID() async {
+        let transport = StubInstallTransport([.status(201, #"{"ok":true,"id":"r_42"}"#)])
+        #expect(await client(transport).send(bug()) == .sent(id: "r_42"))
+        #expect(client(transport).queued().isEmpty)
+    }
+
+    @Test(arguments: [StubInstallTransport.Reply.failure, .status(500), .status(503), .status(429)])
+    func failedSendsWaitInTheOutboxAndAreRetried(_ reply: StubInstallTransport.Reply) async {
+        let start = Date(timeIntervalSince1970: 1_762_200_000)
+        let transport = StubInstallTransport([reply, reply, .status(201)])
+        let result = await client(transport, now: start).send(bug())
+        guard case .queued = result else { Issue.record("expected queued, got \(result)"); return }
+        let queued = client(transport).queued()
+        #expect(queued.count == 1)
+        #expect(queued.first?.item.attempts == 1)
+        #expect(queued.first?.item.nextAttempt == start.addingTimeInterval(ReportClient.retryInterval))
+
+        // The periodic retry waits for the back-off; a launch tries straight away.
+        #expect(await client(transport, now: start.addingTimeInterval(60)).flush(respectingBackoff: true).isEmpty)
+        let second = await client(transport, now: start.addingTimeInterval(60)).flush(respectingBackoff: false)
+        #expect(second.count == 1)
+        // The back-off doubles: 10 min after the first failure, 20 after the second.
+        #expect(client(transport).queued().first?.item.attempts == 2)
+        #expect(client(transport).queued().first?.item.nextAttempt == start.addingTimeInterval(60 + 2 * ReportClient.retryInterval))
+        #expect(await client(transport, now: start.addingTimeInterval(3_600)).flush() == [.sent(id: nil)])
+        #expect(client(transport).queued().isEmpty)
+    }
+
+    @Test(arguments: [401, 413])
+    func refusedReportsAreDropped(_ status: Int) async {
+        let transport = StubInstallTransport([.status(status)])
+        #expect(await client(transport).send(bug()) == .rejected(status: status))
+        #expect(client(transport).queued().isEmpty)
+
+        // The same for one already waiting in the outbox.
+        client(transport).enqueue(bug())
+        let waiting = StubInstallTransport([.status(status)])
+        #expect(await client(waiting).flush(respectingBackoff: false) == [.rejected(status: status)])
+        #expect(client(waiting).queued().isEmpty)
+    }
+
+    @Test func theOutboxKeepsTheNewestFifty() {
+        for i in 1...55 {
+            client(StubInstallTransport([]), now: Date(timeIntervalSince1970: 1_000 + Double(i))).enqueue(bug("Report \(i)"))
+        }
+        let queued = client(StubInstallTransport([])).queued()
+        #expect(queued.count == ReportClient.outboxLimit)
+        #expect(queued.first?.item.report.title == "Report 6")
+        #expect(queued.last?.item.report.title == "Report 55")
+    }
+
+    @Test func aFlushStopsAtTheFirstReportThatHasToWait() async {
+        for i in 1...3 { client(StubInstallTransport([]), now: Date(timeIntervalSince1970: Double(i))).enqueue(bug("R\(i)")) }
+        let transport = StubInstallTransport([.status(201), .status(503)])
+        let results = await client(transport).flush(respectingBackoff: false)
+        #expect(results.count == 2)
+        #expect(transport.count == 2)
+        #expect(client(transport).queued().map(\.item.report.title) == ["R2", "R3"])
+    }
+
+    @Test func nothingIsSentWithoutAKey() async {
+        let transport = StubInstallTransport([])
+        #expect(await client(transport, key: "").send(bug()) == .disabled)
+        #expect(await client(transport, key: "").flush(respectingBackoff: false).isEmpty)
+        #expect(transport.count == 0)
+    }
+
+    @Test func automaticReportsAreOffByDefault() {
+        #expect(ReportClient.automaticReportsEnabled(defaults) == false)
+        defaults.set(true, forKey: ReportClient.automaticReportsKey)
+        #expect(ReportClient.automaticReportsEnabled(defaults))
+    }
+
+    @Test func backoffDoublesUpToTwelveHours() {
+        #expect(ReportClient.backoff(afterAttempts: 0) == 0)
+        #expect(ReportClient.backoff(afterAttempts: 1) == 600)
+        #expect(ReportClient.backoff(afterAttempts: 2) == 1_200)
+        #expect(ReportClient.backoff(afterAttempts: 3) == 2_400)
+        #expect(ReportClient.backoff(afterAttempts: 20) == 12 * 3_600)
+    }
+}
+
+// MARK: - Update check
+
+@MainActor
+struct UpdateCheckerTests {
+    private let defaults = UserDefaults(suiteName: "UpdateCheckerTests.\(UUID().uuidString)")!
+
+    private func checker(_ transport: StubInstallTransport, running: String = "2.9.0",
+                         now: Date = Date(timeIntervalSince1970: 1_762_200_000)) -> UpdateChecker {
+        UpdateChecker(defaults: defaults, config: BackendConfig(baseURL: URL(string: "https://example.test")!, apiKey: ""),
+                      transport: transport, version: AppVersion(marketing: running, build: "1", copyright: ""), now: { now })
+    }
+
+    private func release(_ version: String) -> String {
+        #"{"release":{"version":"\#(version)","build":"60","title":"Kalshi Bot \#(version)","notes":"Fixes","download_url":"https://example.test/dl","checksum":"abc","min_os":"27.2","released_at":"2026-11-10T00:00:00Z"}}"#
+    }
+
+    @Test func asksTheLatestReleaseEndpointWithoutAKey() async throws {
+        let transport = StubInstallTransport([.status(200, release("2.10.0"))])
+        let updates = checker(transport)
+        let result = await updates.check()
+        let offered = try #require(updates.availableUpdate)
+        #expect(result == .updateAvailable(offered))
+        let request = try #require(transport.requests.first)
+        #expect(request.httpMethod == "GET")
+        #expect(request.url?.absoluteString == "https://example.test/api/v1/products/kalshibot/latest?channel=stable")
+        #expect(request.value(forHTTPHeaderField: "X-API-Key") == nil)
+        // 2.10.0 is newer than 2.9.0: compared as versions, not as text.
+        #expect(updates.availableUpdate?.version == "2.10.0")
+        #expect(updates.availableUpdate?.notes == "Fixes")
+    }
+
+    @Test(arguments: ["2.9.0", "2.8.9", "2.9.0-beta.1", "garbage"])
+    func sameOlderOrUnreadableReleasesAreNotOffered(_ version: String) async {
+        let updates = checker(StubInstallTransport([.status(200, release(version))]))
+        #expect(await updates.check() == .upToDate)
+        #expect(updates.availableUpdate == nil)
+    }
+
+    @Test func nothingPublishedIsUpToDate() async {
+        #expect(await checker(StubInstallTransport([.status(404)])).check() == .upToDate)
+    }
+
+    @Test func theLaunchCheckRunsAtMostEverySixHours() async {
+        let start = Date(timeIntervalSince1970: 1_762_200_000)
+        let transport = StubInstallTransport([.status(200, release("2.9.0")), .status(200, release("2.9.0"))])
+        #expect(await checker(transport, now: start).checkIfDue() == .upToDate)
+        #expect(await checker(transport, now: start.addingTimeInterval(5 * 3_600)).checkIfDue() == nil)
+        #expect(await checker(transport, now: start.addingTimeInterval(6 * 3_600)).checkIfDue() == .upToDate)
+        #expect(transport.count == 2)
+    }
+
+    @Test func checkForUpdatesAlwaysChecksAndReportsTheResult() async {
+        let start = Date(timeIntervalSince1970: 1_762_200_000)
+        let transport = StubInstallTransport([.status(200, release("2.9.0")), .status(500)])
+        let updates = checker(transport, now: start)
+        await updates.checkIfDue()
+        await updates.checkNow()
+        #expect(transport.count == 2)
+        #expect(updates.manualResult == .failed("The update server returned HTTP 500."))
+    }
+
+    @Test func aDismissedReleaseStaysHiddenUntilANewerOne() async {
+        let updates = checker(StubInstallTransport([.status(200, release("2.10.0")), .status(200, release("2.10.0")), .status(200, release("2.11.0"))]))
+        await updates.check()
+        updates.dismiss()
+        #expect(updates.availableUpdate == nil)
+        await updates.check()
+        #expect(updates.availableUpdate == nil)
+        await updates.check()
+        #expect(updates.availableUpdate?.version == "2.11.0")
+    }
+}

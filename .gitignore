@@ -20,3 +20,6 @@ build/
 .swiftpm/
 # Xcode-managed SwiftPM workspace config (no packages are used)
 *.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+
+# Install-notice API key (copy config/ITTConfig.example.plist here); never commit it
+KalshiBot/Resources/ITTConfig.plist

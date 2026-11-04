@@ -455,7 +455,9 @@ final class BotEngine {
     }
 
     /// Files the app writes outside SwiftData and UserDefaults.
-    nonisolated static var storedFiles: [URL] { [HistoryCache.fileURL, RiskLog.fileURL] }
+    nonisolated static var storedFiles: [URL] {
+        [HistoryCache.fileURL, RiskLog.fileURL, CrashCapture.defaultDirectory, AppLog.defaultDirectory]
+    }
 
     /// Erase everything: stops the bot and deletes the prediction log, training history,
     /// every setting, calibration and statistic, the saved market download and the risk
@@ -1410,8 +1412,23 @@ final class BotEngine {
     }
 
     private func log(_ message: String) {
+        AppLog.shared.append(message)
         activity.insert(ActivityEntry(time: .now, message: message), at: 0)
         if activity.count > 100 { activity.removeLast(activity.count - 100) }
+    }
+
+    /// The settings in effect, for crash reports — nothing personal (the stake is left out).
+    var crashReportSettings: [String: String] {
+        [
+            "call_delay_minutes": "\(callDelayMinutes)",
+            "minimum_call_confidence": "\(minimumCallConfidence)",
+            "trading_style": tradingStyle.title,
+            "use_kalshi_odds": "\(useKalshiOdds)",
+            "keep_mac_awake": "\(keepMacAwake)",
+            "custom_stop_loss": "\(customStopLoss)",
+            "custom_take_profit": "\(customTakeProfit)",
+            "is_running": "\(isRunning)",
+        ]
     }
 
     nonisolated static func usd(_ value: Double) -> String {

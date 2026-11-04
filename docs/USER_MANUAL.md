@@ -2,7 +2,7 @@
 
 Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.
 
-Version 2.24.1 · macOS 27.2 or later · © 2026 I'm The Team, LLC
+Version 2.27.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC
 
 ![The dashboard during a live window](images/01-dashboard.jpg)
 
@@ -42,6 +42,14 @@ While it's running, Kalshi Bot keeps your Mac from sleeping, so it doesn't miss 
 | Tabs | Dashboard, Indicators, Performance, Prediction Log and Activity. |
 | Copy CSV | Copies the whole prediction log to the clipboard as CSV, for a spreadsheet. |
 | Start / Stop | Starts or pauses the bot. |
+
+### Menus
+
+| Item | What it does |
+| --- | --- |
+| Kalshi Bot › Check for Updates… | Asks for the newest release and, if it's newer, shows a notice with a download button. It never downloads or installs by itself. The app also checks at launch, at most every 6 hours. |
+| Kalshi Bot › Settings… (⌘,) | Privacy: **Send crash and bug reports** (off by default) and **Send anonymous install notice**. |
+| Help › Report a Problem… | Sends a bug report or feedback you write, with an optional contact e-mail and recent logs. **Preview…** shows exactly what will be sent. |
 
 ### Popover tips
 
@@ -290,7 +298,11 @@ A timestamped list of what the bot is doing: windows opening, calls locking, set
 
 ## 10. Your data
 
-All data stays on your Mac, in Kalshi Bot's sandboxed container. Nothing is sent anywhere except the public market-data requests described in [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md).
+Your prediction log, history, model and settings stay on your Mac, in Kalshi Bot's sandboxed container. Apart from the public market-data requests described in [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md), the only things sent anywhere are the install notice and crash reports below.
+
+**Install notice.** Kalshi Bot sends an anonymous install notice to I'm The Team, LLC (`www.imtheteam.com`) once per installation, and again after each update and about once a month: a random install id generated on your Mac, the app version and build, the macOS version, the Mac model (for example `Mac16,10`), the locale and the time zone (for example `America/Chicago`). The app never looks up its own location; the server derives an approximate one (country, region, city) from the IP address of the connection that delivers the notice. It contains no personal data — no name, account, serial number, prediction log or trading data, and the app doesn't send its IP address itself. The reply may name a newer release, which the app offers as a dismissible notice; it never downloads or installs anything by itself. To turn it off, uncheck **Send anonymous install notice** in **Kalshi Bot › Settings…** (⌘,).
+
+**Crash and bug reports.** Reporting is **off by default**. Turn it on in **Kalshi Bot › Settings…** (⌘,) with **Send crash and bug reports**, and off the same way. When it's on and Kalshi Bot crashes, the next launch sends an anonymous report to I'm The Team, LLC: the crash type and message, the stack trace, a fingerprint that groups repeats, the last 300 lines of the app's own log with API keys, tokens, passwords and e-mail addresses masked, the app and macOS versions, the Mac model, the locale, the random install id and the bot's non-personal settings (call time, threshold, trading style and similar — not your stake). While it's off, a crash leaves only a local file, and the next launch asks once — **Send**, **Don't Send** or **Always Send**. **Help › Report a Problem…** sends a bug report or feedback you write yourself (with an optional contact e-mail and, if you leave it checked, recent logs; **Preview…** shows exactly what will be sent); it works whether or not automatic reports are on. Paths under your home folder are shortened to `~` and your user name is removed; no documents, window titles or clipboard contents are included. Crash files wait in `~/Library/Containers/I-m-The-Team.KalshiBot/Data/Library/Application Support/crashes/` (at most 20). A report that can't be sent yet waits in the `outbox` folder beside it (at most 50) and is retried at the next launch and every 10 minutes, backing off up to 12 hours; the app's logs are in the `Logs` folder there too.
 
 **Reset Model…** in the Model card offers three choices:
 

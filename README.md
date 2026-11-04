@@ -25,7 +25,7 @@ A macOS app that calls every Kalshi 15-minute Bitcoin Up/Down window, shows the 
 
 <p align="center"><a href="https://github.com/jaldrich2023/KalshiBot/releases/latest"><b>⬇︎ Download the latest version</b></a> · <a href="docs/INSTALL.md">Install guide</a></p>
 
-<p align="center"><b>Current version: 2.24.1 (Build 45)</b> · macOS 27.2 or later</p>
+<p align="center"><b>Current version: 2.27.0 (Build 48)</b> · macOS 27.2 or later</p>
 
 ![The dashboard during a live window](docs/images/01-dashboard.jpg)
 
@@ -79,6 +79,8 @@ Each [release](https://github.com/jaldrich2023/KalshiBot/releases) includes a re
 2. Select the **KalshiBot** scheme and **My Mac**, then choose **Product › Run** (⌘R).
 3. On first launch it downloads Kalshi's market history and rebuilds the past windows for training. This takes a few minutes the first time; progress shows in the Model card. The download is saved, so later launches take seconds.
 
+The install notice needs an ingest key, which isn't in the repository. To send it from your own build, copy `config/ITTConfig.example.plist` to `KalshiBot/Resources/ITTConfig.plist` (gitignored) and paste the key into `ITTAPIKey`. Without it, builds work normally and send nothing.
+
 Run the tests with **Product › Test** (⌘U). The suite uses Swift Testing. One long network research test (`KalshiFlowProbe`) is disabled by default; enable it to run it on demand.
 
 ## Project layout
@@ -104,6 +106,14 @@ Run the tests with **Product › Test** (⌘U). The suite uses Swift Testing. On
 - [Disclaimer](DISCLAIMER.md)
 
 To rebuild the PDFs after editing the docs, run `docs/tools/make_pdfs.sh`. It regenerates the manual's HTML from `docs/USER_MANUAL.md` and prints both documents with WebKit, with no browser needed.
+
+## Privacy
+
+Kalshi Bot sends an anonymous install notice to I'm The Team, LLC (`www.imtheteam.com`) once per installation, and again after each update and about once a month: a random install id generated on your Mac, the app version and build, the macOS version, the Mac model (for example `Mac16,10`), the locale and the time zone (for example `America/Chicago`). The app never looks up its own location; the server derives an approximate one (country, region, city) from the IP address of the connection that delivers the notice. It contains no personal data — no name, account, serial number, prediction log or trading data, and the app doesn't send its IP address itself. The reply may name a newer release, which the app offers as a dismissible notice; it never downloads or installs anything by itself. Turn it off in **Kalshi Bot › Settings…** (⌘,).
+
+**Crash and bug reports.** Reporting is **off by default**. Turn it on in **Kalshi Bot › Settings…** (⌘,) with **Send crash and bug reports**, and off the same way. When it's on and Kalshi Bot crashes, the next launch sends an anonymous report to I'm The Team, LLC: the crash type and message, the stack trace, a fingerprint that groups repeats, the last 300 lines of the app's own log with API keys, tokens, passwords and e-mail addresses masked, the app and macOS versions, the Mac model, the locale, the random install id and the bot's non-personal settings (call time, threshold, trading style and similar — not your stake). While it's off, a crash leaves only a local file, and the next launch asks once — **Send**, **Don't Send** or **Always Send**. **Help › Report a Problem…** sends a bug report or feedback you write yourself (with an optional contact e-mail and, if you leave it checked, recent logs; **Preview…** shows exactly what will be sent); it works whether or not automatic reports are on. Paths under your home folder are shortened to `~` and your user name is removed; no documents, window titles or clipboard contents are included. Crash files wait in `~/Library/Containers/I-m-The-Team.KalshiBot/Data/Library/Application Support/crashes/` (at most 20). A report that can't be sent yet waits in the `outbox` folder beside it (at most 50) and is retried at the next launch and every 10 minutes, backing off up to 12 hours; the app's logs are in the `Logs` folder there too.
+
+Everything else — the prediction log, history, model and settings — stays on your Mac.
 
 ## Contributing and security
 

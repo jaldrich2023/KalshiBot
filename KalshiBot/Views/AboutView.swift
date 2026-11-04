@@ -41,6 +41,11 @@ struct AboutView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            Label(Self.privacyNote, systemImage: "hand.raised")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             VStack(alignment: .leading, spacing: 8) {
                 CardHeader(title: "License", systemImage: "doc.text")
                 ScrollView {
@@ -86,6 +91,8 @@ extension AboutView {
         .glassCard()
         .accessibilityElement(children: .combine)
     }
+
+    static let privacyNote = "Privacy: Kalshi Bot sends I'm The Team, LLC an anonymous install notice — a random id, the app version, macOS version, Mac model, locale and time zone — once per installation and about once a month; the server derives an approximate location (country, region, city) from the connection's IP address. Crash and bug reports are sent only if you turn them on in Settings or send one yourself. No personal data is sent."
 
     static let disclaimerPoints = [
         "For information only. Nothing here is financial, investment or trading advice, or a recommendation to buy or sell anything.",

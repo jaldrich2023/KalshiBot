@@ -11,7 +11,7 @@ Report them privately using GitHub's private vulnerability reporting:
 3. Include:
    - what the problem is and what someone could do with it,
    - the steps to reproduce it,
-   - the version of Kalshi Bot (**Kalshi Bot › About Kalshi Bot**, for example "Version 2.24.1 · Build 45") and of macOS.
+   - the version of Kalshi Bot (**Kalshi Bot › About Kalshi Bot**, for example "Version 2.27.0 · Build 48") and of macOS.
 
 You'll get an acknowledgement as soon as possible, followed by updates as the issue is investigated and fixed. Please give a reasonable amount of time for a fix before you disclose anything publicly.
 
@@ -19,12 +19,12 @@ You'll get an acknowledgement as soon as possible, followed by updates as the is
 
 | Version | Supported |
 | --- | --- |
-| 2.24.x (latest) | Yes |
+| 2.27.x (latest) | Yes |
 | Earlier | No — update to the latest version |
 
 ## Scope
 
-Kalshi Bot is a sandboxed macOS app. It makes **outgoing** connections only, to public market-data endpoints. It runs no server, accepts no incoming connections, needs no account or API keys, stores no credentials, and never places orders.
+Kalshi Bot is a sandboxed macOS app. It makes **outgoing** connections only: to public market-data endpoints, and to I'm The Team's backend for an anonymous install notice (once per installation and after each update) crash and bug reports (off by default, or sent by you from Help › Report a Problem…), and an update check for the newest release. The install notice and automatic reports are controlled in Settings. It runs no server, accepts no incoming connections, needs no account, stores no user credentials, and never places orders.
 
 In scope:
 

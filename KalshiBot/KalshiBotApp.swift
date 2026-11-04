@@ -12,9 +12,22 @@ import AppKit
 @main
 struct KalshiBotApp: App {
     @State private var engine = BotEngine()
+    @State private var updates: UpdateChecker
+    @State private var installReporter: InstallReporter
+    @State private var reports = ReportClient()
 
     init() {
         Self.quitOtherInstances()
+        let updates = UpdateChecker()
+        _updates = State(initialValue: updates)
+        _installReporter = State(initialValue: InstallReporter(updates: updates))
+        AppLog.shared.start()
+        // Crash capture writes a local file only; whether it's sent is decided at the next
+        // launch (the opt-in, or the crash prompt). Unit tests run inside this app; their
+        // process isn't the app's, so it's left alone.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+            CrashCapture.install()
+        }
     }
 
     /// Two copies of the bot would both write the prediction log, settings and model.
@@ -56,6 +69,9 @@ struct KalshiBotApp: App {
         WindowGroup {
             ContentView()
                 .environment(engine)
+                .environment(installReporter)
+                .environment(updates)
+                .environment(reports)
                 // A fixed size the five-column dashboard is laid out for, shrunk only on a
                 // screen too small for it, so nothing runs off the edge (anything that
                 // then doesn't fit scrolls inside the window).
@@ -69,8 +85,25 @@ struct KalshiBotApp: App {
         .restorationBehavior(.disabled)
         .modelContainer(sharedModelContainer)
         .commands {
-            CommandGroup(replacing: .appInfo) { AboutCommand() }
+            CommandGroup(replacing: .appInfo) {
+                AboutCommand()
+                CheckForUpdatesCommand(updates: updates)
+            }
+            CommandGroup(after: .help) { ReportProblemCommand() }
         }
+
+        Settings {
+            SettingsView()
+        }
+        .windowResizability(.contentSize)
+
+        Window("Report a Problem", id: ReportProblemView.windowID) {
+            ReportProblemView()
+                .environment(engine)
+                .environment(reports)
+        }
+        .windowResizability(.contentSize)
+        .restorationBehavior(.disabled)
 
         Window("About Kalshi Bot", id: AboutView.windowID) {
             AboutView()

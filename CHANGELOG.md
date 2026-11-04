@@ -5,6 +5,93 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.27.0] — 2026-11-03 · Build 48
+
+### Added
+- **Settings › Send crash and bug reports** (off by default), with a one-line summary of
+  what a report contains and a link to the privacy section. Crash reports are sent only
+  when it's on. While it's off, a crash leaves only a local file and the next launch asks
+  once: Send, Don't Send or Always Send.
+- **Help › Report a Problem…**: a form for a bug report or feedback — kind, title,
+  description, optional contact e-mail, and "Include recent logs" (on by default) with a
+  Preview of exactly what will be sent. It shows the report id when sent, or why it
+  couldn't be, with Retry. Always allowed, since you choose to send it.
+- **Kalshi Bot › Check for Updates…**, and an update check at launch at most every
+  6 hours, against the backend's latest-release endpoint. A newer version (compared as a
+  semantic version) shows a dismissible notice with a download button; nothing is
+  downloaded or installed automatically.
+- **Report outbox.** Reports that can't be sent (offline, 429, 5xx) wait in
+  `Application Support/outbox/` (at most 50, oldest dropped) and are retried at the next
+  launch and every 10 minutes, backing off from 10 minutes to 12 hours. 401 and 413 drop
+  a report. Every report is cut to the backend's limits first (title 200 characters,
+  description 20,000, logs 100 KB keeping the newest lines, metadata 32 KB).
+- Tests for report encoding, truncation, the outbox (persist, retry, back-off, drop
+  oldest, refusals), the update check and the opt-in.
+
+### Changed
+- Crash files are now turned into reports in the outbox at launch, instead of being sent
+  directly, and a 413 drops the report (reports are cut to size beforehand).
+- Crash capture is installed whether or not reporting is on; it only writes a local file.
+
+## [2.26.0] — 2026-11-03 · Build 47
+
+### Added
+- **Automatic crash reports.** When the app crashes, its handlers (uncaught Objective-C
+  exceptions, and SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE and SIGTRAP — Swift's own
+  runtime errors arrive as SIGTRAP) write a small JSON file to
+  `Application Support/crashes/` using buffers prepared at launch and async-signal-safe
+  calls, then re-raise so macOS still records the crash. On the next launch, after the
+  window appears, each file is symbolicated, scrubbed and sent to I'm The Team's backend
+  with a 15-second timeout: the exception type and message, the stack, a fingerprint
+  (SHA-256 of the type and the first five app frames, addresses removed, so repeats group
+  together), the last 300 log lines with keys, tokens, passwords, e-mail addresses, the
+  home folder and the user name masked, the versions, Mac model, locale, install id and
+  the non-personal settings in effect. Crashes in save or migration code are marked
+  critical. A file is deleted once sent, on 401, or on 413 after one smaller resend; on
+  429, 5xx or no network it waits for the next launch. At most 20 are kept.
+- **App log.** The last 500 log lines are kept in memory and in one file per launch
+  (`Application Support/Logs/`, last 5 launches); a crash report attaches its launch's file.
+- **Settings window** (Kalshi Bot › Settings…, ⌘,) with **Send crash reports
+  automatically** and **Send anonymous install notice**, both on by default, and a link
+  to the privacy section. Crash reporting is on by default because the install notice
+  already is.
+- Debug builds: `--crash-test`, `--crash-test=segv` and `--crash-test=exception` crash
+  the app 3 seconds after launch, to check the report end to end.
+- Erase Everything also deletes the crash files and logs.
+- Tests for crash capture, fingerprints, scrubbing, sending, retries and the folder cap.
+
+### Changed
+- The install notice, backend settings and HTTP layer now live in `BackendClient.swift`,
+  shared with crash reports. The install notice logs when it's sent.
+- **The install notice includes the time zone** (IANA identifier, e.g. `America/Chicago`)
+  and is re-sent at most every 30 days (`itt.install_last_ping`) as well as after each
+  update, so the backend's location and version views stay current. The app never looks
+  up its location; the server derives an approximate one from the connection's IP address.
+  The privacy text in the About window, Settings and the docs says so.
+
+## [2.25.0] — 2026-11-03 · Build 46
+
+### Added
+- **Anonymous install notice.** Once per installation, and once more after each update,
+  the app tells I'm The Team's product backend it's installed: a random install id
+  (UUID v4, generated on the Mac and never derived from hardware or accounts), the app
+  version and build, the macOS version, the Mac model and the locale. No personal data.
+  It's sent in the background after the window appears, with a 10-second timeout. A
+  network failure, 429 or 5xx is retried on the next launch (once per launch, never in a
+  loop); a 401 or other client error isn't retried. Turn it off with
+  `defaults write I-m-The-Team.KalshiBot itt.telemetry_enabled -bool NO`.
+- **Update notice.** If the backend reports a newer release, a quiet, dismissible notice
+  at the bottom of the window links to its download page. Nothing is downloaded or
+  installed automatically; dismissing it hides that release for good.
+- The ingest key is read from `KalshiBot/Resources/ITTConfig.plist`, which is gitignored
+  (template: `config/ITTConfig.example.plist`). Without a key nothing is sent.
+- Tests for the install notice, with a stubbed network layer.
+
+### Changed
+- The About window, README, user manual, SECURITY, THIRD_PARTY_NOTICES and brochure
+  describe the install notice; they previously said nothing was sent besides
+  market-data requests.
+
 ## [2.24.1] — 2026-11-03 · Build 45
 
 ### Changed

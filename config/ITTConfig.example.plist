@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template for the install notice's settings. Copy it to KalshiBot/Resources/ITTConfig.plist
+  (gitignored) and paste the ingest-only key from Admin › Products › Edit › API key. Xcode
+  bundles that file at build time. With no file, or an empty key, no notice is sent.
+-->
+<plist version="1.0">
+<dict>
+	<key>ITTAPIKey</key>
+	<string></string>
+	<key>ITTBaseURL</key>
+	<string>https://www.imtheteam.com</string>
+</dict>
+</plist>
