@@ -47,6 +47,8 @@ final class BotEngine {
     private(set) var settledCount = 0
     private(set) var lastSettledAt: Date?
     private var watchedSettlement: String?
+    /// Settlement watches by ticker, so stopping or a reset can cancel them.
+    private var settlementWatches: [String: Task<Void, Never>] = [:]
     private var isResolving = false
     /// `true` when the last price came from the live WebSocket streams, `false` if from REST polling.
     private(set) var isStreaming = false
@@ -167,6 +169,10 @@ final class BotEngine {
     /// needs `ModelTrainer.freshWindowsPerTrial` more windows, so a streak is built from
     /// separate evidence rather than the same windows judged again.
     private var trialMarks: [String: Int] = [:]
+    /// Per signal, the time of the newest window judged by its last counted result; the
+    /// next counted result judges only windows after it (see `TrialResult.markTime`).
+    /// Replaces `trialMarks`, which is read only until a signal has a time mark.
+    private var trialMarkTimes: [String: Date] = [:]
     static let trialStreakToChange = 3
 
     /// Where a context signal stands on its way to promotion (or, if promoted, demotion).
@@ -192,8 +198,11 @@ final class BotEngine {
         let fresh = ModelTrainer.freshWindowsPerTrial
         // A first counted result judges the newest 20%, so it needs that to be ≥ `fresh`.
         let firstCounted = max(liveOnly ? ModelTrainer.minimumLiveTrialWindows : 0, fresh * 5)
-        let nextCountedAt = trialMarks[raw].map { $0 + fresh } ?? firstCounted
-        let untilNext = max(nextCountedAt - pool, 0)
+        let untilNext = if let since = trial.windowsSinceMark {
+            max(fresh - since, 0)
+        } else {
+            max((trialMarks[raw].map { $0 + fresh } ?? firstCounted) - pool, 0)
+        }
         let isPromoted = promoted.contains(key)
         let streak = trialStreaks[raw] ?? 0
         let soFar = isPromoted ? max(-streak, 0) : max(streak, 0)
@@ -273,6 +282,7 @@ final class BotEngine {
     var useKalshiOdds: Bool {
         didSet {
             UserDefaults.standard.set(useKalshiOdds, forKey: Keys.useKalshiOdds)
+            modelGeneration += 1
             Task { await retrain() }
         }
     }
@@ -290,6 +300,11 @@ final class BotEngine {
     private var nextMarket: KalshiMarket?
     private var isRefreshingMarket = false
     private var isFallbackPolling = false
+    /// When the indicator candles were last fetched.
+    private var candlesFetchedAt: Date?
+    /// A window whose ticker fetched an already-closed market (the repeated 1–2 AM hour
+    /// when clocks fall back, whose tickers repeat): not retried until this close.
+    private var unavailableWindowClose: Date?
     private var modelContext: ModelContext?
     private var tasks: [Task<Void, Never>] = []
     /// Keeps the Mac from idle-sleeping (and the app from App Nap) while the bot runs;
@@ -301,6 +316,12 @@ final class BotEngine {
     private var lastCalibratedTicker: String?
     /// Bumped by a reset so an in-flight history rebuild discards its results.
     private var historyGeneration = 0
+    /// Bumped by a reset, a call-time or Kalshi-odds change and an erase, so a retrain
+    /// already running discards its model and trials (and fits again) instead of
+    /// installing ones made under the old state.
+    private var modelGeneration = 0
+    /// Set by `eraseEverything`: work still in flight mustn't write anything back.
+    private var isErased = false
     /// A rebuild was asked for while one was running; run again when it finishes.
     private var catchUpRequested = false
     private var calibrationSamples: [Double] = []
@@ -333,6 +354,7 @@ final class BotEngine {
         static let promoted = "promotedFeatures"
         static let trialStreaks = "trialStreaks"
         static let trialMarks = "trialMarks"
+        static let trialMarkTimes = "trialMarkTimes"
         /// Written by the dashboard; kept through a reset as a display setting.
         static let dashboardRequiredHeight = "dashboardRequiredHeight"
     }
@@ -379,6 +401,8 @@ final class BotEngine {
         promoted = savedPromotions
         trialStreaks = defaults.dictionary(forKey: Keys.trialStreaks) as? [String: Int] ?? [:]
         trialMarks = defaults.dictionary(forKey: Keys.trialMarks) as? [String: Int] ?? [:]
+        trialMarkTimes = (defaults.dictionary(forKey: Keys.trialMarkTimes) as? [String: Double] ?? [:])
+            .mapValues { Date(timeIntervalSince1970: $0) }
         if let stored = defaults.dictionary(forKey: Keys.confidenceHistory) as? [String: [Int]] {
             confidenceHistory = stored.compactMapValues { $0.count == 2 ? (won: $0[0], total: $0[1]) : nil }
         }
@@ -406,6 +430,10 @@ final class BotEngine {
 
     func start(context: ModelContext) {
         guard !isRunning else { return }
+        guard !isErased else {
+            log("Everything was erased — relaunch the app to start again")
+            return
+        }
         modelContext = context
         isRunning = true
         updateActivity()
@@ -434,6 +462,7 @@ final class BotEngine {
     func stop() {
         tasks.forEach { $0.cancel() }
         tasks = []
+        cancelSettlementWatches()
         Task { await liveFeed.stop() }
         isRunning = false
         endActivity()
@@ -454,6 +483,11 @@ final class BotEngine {
         keepAwake = nil
     }
 
+    private func cancelSettlementWatches() {
+        settlementWatches.values.forEach { $0.cancel() }
+        settlementWatches = [:]
+    }
+
     /// Files the app writes outside SwiftData and UserDefaults.
     nonisolated static var storedFiles: [URL] {
         [HistoryCache.fileURL, RiskLog.fileURL, CrashCapture.defaultDirectory, AppLog.defaultDirectory]
@@ -465,6 +499,10 @@ final class BotEngine {
     /// setting starts again from its default.
     func eraseEverything() {
         stop()
+        // Catch-ups, retrains and saves still in flight check these before writing.
+        isErased = true
+        historyGeneration += 1
+        modelGeneration += 1
         if let context = modelContext {
             for record in (try? context.fetch(FetchDescriptor<PredictionRecord>())) ?? [] { context.delete(record) }
             for example in (try? context.fetch(FetchDescriptor<TrainingExample>())) ?? [] { context.delete(example) }
@@ -482,11 +520,15 @@ final class BotEngine {
     /// history, calibration and activity are kept.
     func resetModelKeepingData() {
         let defaults = UserDefaults.standard
-        for key in [Keys.model, Keys.promoted, Keys.trialStreaks, Keys.trialMarks] { defaults.removeObject(forKey: key) }
+        for key in [Keys.model, Keys.promoted, Keys.trialStreaks, Keys.trialMarks, Keys.trialMarkTimes] {
+            defaults.removeObject(forKey: key)
+        }
         defaults.set(Date.now, forKey: Keys.lastResetAt)
         promoted = []
         trialStreaks = [:]
         trialMarks = [:]
+        trialMarkTimes = [:]
+        modelGeneration += 1
         model = .starting(excluding: excludedFeatures)
         recomputeLive()
         log("Model reset: starting weights, promotions and trials cleared; retraining on the data already collected")
@@ -499,6 +541,8 @@ final class BotEngine {
     /// (The BRTI price calibration is kept; it's a measurement, not a log.)
     func resetModel() {
         guard let context = modelContext else { return }
+        // A settlement watch mid-fetch would write to the deleted records.
+        cancelSettlementWatches()
         // Delete object by object (not a batch delete) so every @Query view empties at once.
         for record in (try? context.fetch(FetchDescriptor<PredictionRecord>())) ?? [] { context.delete(record) }
         for example in (try? context.fetch(FetchDescriptor<TrainingExample>())) ?? [] { context.delete(example) }
@@ -534,10 +578,12 @@ final class BotEngine {
         promoted = []
         trialStreaks = [:]
         trialMarks = [:]
+        trialMarkTimes = [:]
         model = .starting(excluding: excludedFeatures)
         liveExampleCount = 0
         historyExampleCount = 0
         historyGeneration += 1
+        modelGeneration += 1
         recomputeLive()
         log("Reset: all predictions, training data, calibration and stats cleared; rebuilding market history")
         Task { await catchUpHistory() }
@@ -584,6 +630,9 @@ final class BotEngine {
                 isFallbackPolling = true
                 defer { isFallbackPolling = false }
                 if let polled = await composite.compositeMid() {
+                    // It can take many seconds: drop it if the streams came back or a newer
+                    // sample landed meanwhile, so the ticks stay in order.
+                    guard !isStreaming, ticks.last.map({ $0.time < now }) ?? true else { return }
                     // The REST fallback has no per-exchange detail; use the typical offset.
                     let offset = sourceOffsets.isEmpty ? 0 : Self.median(Array(sourceOffsets.values))
                     record(price: polled.price + offset, sources: polled.sources, at: now)
@@ -620,8 +669,12 @@ final class BotEngine {
         guard let current = currentMarket, now >= current.closeTime else { return }
         // Settle the window that just closed right away, not on the next 15s sweep.
         if watchedSettlement != current.ticker {
-            watchedSettlement = current.ticker
-            Task { await watchSettlement(of: current.ticker) }
+            let ticker = current.ticker
+            watchedSettlement = ticker
+            settlementWatches[ticker] = Task { [weak self] in
+                await self?.watchSettlement(of: ticker)
+                self?.settlementWatches[ticker] = nil
+            }
         }
         if let next = nextMarket, next.openTime <= now, now < next.closeTime {
             activate(next, at: now)
@@ -662,7 +715,19 @@ final class BotEngine {
             let close = open.addingTimeInterval(quarter)
 
             if currentMarket.map({ now >= $0.closeTime }) ?? true {
-                activate(try await kalshi.market(ticker: KalshiClient.ticker(closingAt: close)), at: now)
+                if unavailableWindowClose.map({ now < $0 }) != true {
+                    // Checked against its close: in the repeated 1–2 AM hour when clocks fall
+                    // back, the ticker can name the earlier, already-closed window.
+                    let fetched = try await kalshi.market(closingAt: close)
+                    if let fetched, fetched.closeTime > Date.now {
+                        // (Unless the switch on the second already moved to the next window.)
+                        if currentMarket.map({ Date.now >= $0.closeTime }) ?? true { activate(fetched, at: now) }
+                    } else {
+                        // Don't refetch (and re-log) every second: try again at the next window.
+                        unavailableWindowClose = close
+                        log("No open Kalshi window closing at \(close.formatted(date: .omitted, time: .shortened)) (\(KalshiClient.ticker(closingAt: close))) — waiting for the next window")
+                    }
+                }
             } else if let current = currentMarket {
                 // The market record (target, status) every second until the official
                 // target is in, then every 10s; the order book (odds) every second.
@@ -684,13 +749,14 @@ final class BotEngine {
                     refreshed.liveYesBid = current.liveYesBid
                     refreshed.liveYesAsk = current.liveYesAsk
                 }
-                currentMarket = refreshed
+                // The window may have closed and the next one opened during the fetches.
+                if currentMarket?.ticker == current.ticker { currentMarket = refreshed }
             }
 
             // Fetch the next window during the last minute of this one.
-            let nextTicker = KalshiClient.ticker(closingAt: close.addingTimeInterval(quarter))
-            if close.timeIntervalSince(now) <= 60, nextMarket?.ticker != nextTicker {
-                nextMarket = try? await kalshi.market(ticker: nextTicker)
+            let nextClose = close.addingTimeInterval(quarter)
+            if close.timeIntervalSince(now) <= 60, nextMarket.flatMap({ KalshiClient.matching([$0], closingAt: nextClose) }) == nil {
+                nextMarket = (try? await kalshi.market(closingAt: nextClose)) ?? nil
             }
 
             if let market = currentMarket {
@@ -709,7 +775,30 @@ final class BotEngine {
     }
 
     private func refreshIndicatorData() async {
-        if let newCandles = try? await coinbase.oneMinuteCandles(), !newCandles.isEmpty { candles = newCandles }
+        if let newCandles = try? await coinbase.oneMinuteCandles(), !newCandles.isEmpty {
+            candles = newCandles
+            candlesFetchedAt = .now
+        }
+    }
+
+    /// Like `refreshIndicatorData`, but gives up after `timeout` (keeping the candles it
+    /// has), so a slow or retrying fetch can't hold up a call.
+    private func refreshIndicatorData(timeout: Duration) async {
+        let coinbase = coinbase
+        let fetched: [Candle]? = await withTaskGroup(of: [Candle]?.self) { group in
+            group.addTask { try? await coinbase.oneMinuteCandles() }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        if let fetched, !fetched.isEmpty {
+            candles = fetched
+            candlesFetchedAt = .now
+        }
     }
 
     // MARK: Prediction
@@ -832,9 +921,22 @@ final class BotEngine {
         isPredicting = true
         defer { isPredicting = false }
 
-        // Use fresh candles and book for the locked-in call.
-        await refreshIndicatorData()
+        // Use fresh candles for the locked-in call — briefly: the call is due now.
+        if candlesFetchedAt.map({ Date.now.timeIntervalSince($0) >= 15 }) ?? true {
+            await refreshIndicatorData(timeout: .seconds(5))
+        }
+        guard !isErased, modelContext === context, (try? context.fetchCount(existing)) == 0 else { return }
         let now = Date.now
+        let lateBy = now.timeIntervalSince(market.openTime)
+        // The call time may have changed, or the fetch run past the deadline, meanwhile.
+        guard lateBy >= callDelay else { return }
+        guard lateBy <= maxPredictionDelay else {
+            lastSkippedTicker = ticker
+            log("Skipped \(ticker): data arrived \(Int(lateBy))s after open, past the call deadline — waiting for the next window")
+            return
+        }
+        // Kalshi's latest odds for this window, not the ones from before the fetch.
+        let market = currentMarket.flatMap { $0.ticker == ticker && $0.floorStrike != nil && !$0.strikeIsEstimate ? $0 : nil } ?? market
         guard let snap = snapshot(for: market, at: now) else { return }
         let features = FeatureExtractor.features(from: snap)
         guard !features.isEmpty else { return }
@@ -859,7 +961,8 @@ final class BotEngine {
             marketYesAsk: market.yesAsk,
             features: features,
             contributions: model.contributions(features, excluding: excluded),
-            excludedFeatures: excluded
+            excludedFeatures: excluded,
+            callDelay: callDelay
         )
         context.insert(record)
         try? context.save()
@@ -873,10 +976,25 @@ final class BotEngine {
     private func watchSettlement(of ticker: String) async {
         for _ in 0..<90 {
             try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
             await resolvePending()
-            let open = FetchDescriptor<PredictionRecord>(predicate: #Predicate { $0.ticker == ticker && $0.actualUp == nil })
+            let open = FetchDescriptor<PredictionRecord>(
+                predicate: #Predicate { $0.ticker == ticker && $0.actualUp == nil && $0.resolvedAt == nil })
             if ((try? modelContext?.fetchCount(open)) ?? 0) == 0 { return }
         }
+    }
+
+    /// Market statuses after which the result is final.
+    nonisolated static let finalStatuses: Set<String> = ["determined", "settled", "finalized", "voided", "void"]
+    /// How long after its close a window with no Yes/No result is waited on.
+    nonisolated static let voidAfter: TimeInterval = 24 * 3600
+
+    /// A window that closed with no Yes/No result and never will: its status is final, or
+    /// it's long past its close. It's marked void rather than polled forever.
+    nonisolated static func isVoid(_ market: KalshiMarket, now: Date = .now) -> Bool {
+        guard market.settledUp == nil else { return false }
+        return finalStatuses.contains(market.status.lowercased()) || market.result?.lowercased() == "void"
+            || now.timeIntervalSince(market.closeTime) > voidAfter
     }
 
     private func resolvePending() async {
@@ -884,28 +1002,42 @@ final class BotEngine {
         isResolving = true
         defer { isResolving = false }
         let cutoff = Date.now.addingTimeInterval(-3)
+        // Voided windows (resolved with no result) aren't waited on.
         let pending = FetchDescriptor<PredictionRecord>(
-            predicate: #Predicate { $0.actualUp == nil && $0.closeTime < cutoff },
+            predicate: #Predicate { $0.actualUp == nil && $0.resolvedAt == nil && $0.closeTime < cutoff },
             sortBy: [SortDescriptor(\.closeTime)]
         )
         guard let records = try? context.fetch(pending), !records.isEmpty else { return }
+        let generation = historyGeneration
 
         var resolvedAny = false
         for record in records {
+            // Read before the await: the record may be deleted by the time it returns.
+            let ticker = record.ticker
             do {
-                let market = try await kalshi.market(ticker: record.ticker)
-                guard let wentUp = market.settledUp else { continue }
+                let market = try await kalshi.market(ticker: ticker)
+                // A reset or erase during the fetch deleted the records: writing to one traps.
+                guard !isErased, generation == historyGeneration, modelContext === context else { break }
+                guard !record.isDeleted, record.modelContext != nil, record.actualUp == nil else { continue }
+                guard let wentUp = market.settledUp else {
+                    if Self.isVoid(market) {
+                        record.resolvedAt = .now
+                        log("\(ticker) closed with no Yes/No result (status \(market.status)) — marked void, not counted")
+                    }
+                    continue
+                }
                 record.actualUp = wentUp
-                if riskLog.resolve(ticker: record.ticker, settledUp: wentUp) { saveRiskLog() }
+                if riskLog.resolve(ticker: ticker, settledUp: wentUp) { saveRiskLog() }
                 record.settlementValue = market.settlementValue
                 record.resolvedAt = .now
                 addLiveExample(from: record, wentUp: wentUp, in: context)
                 resolvedAny = true
-                log("\(record.ticker) settled \(wentUp ? "UP" : "DOWN") — prediction \(record.isCorrect == true ? "✓ correct" : "✗ wrong")")
+                log("\(ticker) settled \(wentUp ? "UP" : "DOWN") — prediction \(record.isCorrect == true ? "✓ correct" : "✗ wrong")")
             } catch {
-                log("Resolve \(record.ticker): \(error.localizedDescription)")
+                log("Resolve \(ticker): \(error.localizedDescription)")
             }
         }
+        guard !isErased else { return }
         try? context.save()
         if resolvedAny {
             // Observed by the dashboard, so accuracy redraws the moment a result lands.
@@ -920,7 +1052,8 @@ final class BotEngine {
     /// At each window open, compares Kalshi's official target (the 60s BRTI average
     /// before the open) with our raw composite's average over the same 60 seconds.
     private func recordCalibrationSample(for market: KalshiMarket) {
-        guard market.ticker != lastCalibratedTicker, !market.strikeIsEstimate, let strike = market.floorStrike else { return }
+        guard !isErased, market.ticker != lastCalibratedTicker, !market.strikeIsEstimate,
+              let strike = market.floorStrike else { return }
         let window = ticks.filter { $0.time < market.openTime && market.openTime.timeIntervalSince($0.time) <= 60 }
         guard window.count >= 40, let first = window.first, market.openTime.timeIntervalSince(first.time) >= 55 else { return }
         lastCalibratedTicker = market.ticker
@@ -1033,17 +1166,33 @@ final class BotEngine {
         // A live example has the full feature set, so it replaces a rebuilt one.
         let existing = FetchDescriptor<TrainingExample>(predicate: #Predicate { $0.ticker == ticker })
         for example in (try? context.fetch(existing)) ?? [] { context.delete(example) }
-        // The call time it was actually made at, to the nearest minute.
-        let delay = (record.predictedAt.timeIntervalSince(record.openTime) / 60).rounded() * 60
+        let delay = Self.storedCallDelay(configured: record.callDelay, predictedAt: record.predictedAt, openTime: record.openTime)
         context.insert(TrainingExample(ticker: ticker, openTime: record.openTime, wentUp: wentUp,
                                        isLive: true, callDelay: delay, features: record.features))
+    }
+
+    /// The call time a live call was made for: the setting it locked under, or — on records
+    /// from before that was stored — the whole minutes after the open it was made at (a
+    /// call is made at most 30s after its call time).
+    nonisolated static func storedCallDelay(configured: Double, predictedAt: Date, openTime: Date) -> Double {
+        configured > 0 ? configured : (predictedAt.timeIntervalSince(openTime) / 60).rounded(.down) * 60
+    }
+
+    /// Whether a catch-up may rebuild a window's stored example (replacing it). Never a
+    /// live one: its live-only features (tick momentum) can't be rebuilt, so one made at
+    /// another call time is kept — unused, as training takes only the current call time —
+    /// until that call time is chosen again. A rebuilt one is redone unless it was built
+    /// at this call time with Kalshi's odds.
+    nonisolated static func catchUpMayReplace(isLive: Bool, callDelay: Double, hasKalshiOdds: Bool,
+                                              at delay: TimeInterval) -> Bool {
+        !isLive && !(abs(callDelay - delay) < 1 && hasKalshiOdds)
     }
 
     /// Rebuilds features for settled windows from Kalshi's full history (up to 180 days) that the bot has no
     /// complete training example for at the current call time: Kalshi settlements and
     /// odds, and Coinbase 1-minute candles for the price indicators.
     private func catchUpHistory() async {
-        guard let context = modelContext else { return }
+        guard let context = modelContext, !isErased else { return }
         guard !isBackfilling else {
             catchUpRequested = true
             return
@@ -1061,14 +1210,9 @@ final class BotEngine {
         }
 
         do {
-            // Complete = has Kalshi odds and was built at the current call time. Anything
-            // else for the same window is replaced.
-            let existing = (try? context.fetch(FetchDescriptor<TrainingExample>())) ?? []
-            let complete = Set(existing.filter {
-                abs($0.callDelay - delay) < 1 && ($0.isLive || $0.sample.features[.kalshiImplied] != nil)
-            }.map(\.ticker))
-            let incomplete = Dictionary(existing.filter { !complete.contains($0.ticker) }.map { ($0.ticker, $0) },
-                                        uniquingKeysWith: { first, _ in first })
+            // Windows kept as they are: live examples (at any call time), and rebuilt ones
+            // with Kalshi odds at the current call time. Anything else is rebuilt.
+            let kept = keptTickers(in: context, at: delay)
 
             // Public market history, rebuilt in full even after a reset: a reset clears the
             // bot's own logs and learning, not what the market did. Downloads are cached on
@@ -1096,13 +1240,13 @@ final class BotEngine {
                     log("Kalshi odds: \(failedBatches) batch(es) failed (\(oddsError?.localizedDescription ?? "unknown error")); those windows retry on the next catch-up")
                 }
             }
+            guard !isErased else { return }
             updateCallTimeAccuracy(markets: all, cache: cache)
 
-            let markets = all.filter { !complete.contains($0.ticker) }
+            let markets = all.filter { !kept.contains($0.ticker) }
             guard let earliest = markets.first?.openTime, let latest = markets.last?.openTime else {
-                let saved = cache
-                await Task.detached { saved.save() }.value
-                await refitRiskCalibration(from: saved)
+                await save(cache)
+                await refitRiskCalibration(from: cache)
                 await retrain()
                 return
             }
@@ -1119,21 +1263,27 @@ final class BotEngine {
             } else {
                 log("Rebuilding \(markets.count) past windows for training (from saved history)…")
             }
-            let saved = cache
-            await Task.detached { saved.save() }.value
-            await refitRiskCalibration(from: saved)
+            await save(cache)
+            await refitRiskCalibration(from: cache)
             let history = cache.candles
             let mids: [TimeInterval: [String: Double]] = [delay: cache.mids(at: delay)]
 
+            // Erased mid-rebuild: nothing is written back.
+            guard !isErased, modelContext === context else { return }
             // A reset or call-time change happened mid-rebuild: its own rebuild runs instead.
             guard generation == historyGeneration, delay == callDelay else {
                 catchUpRequested = true
                 return
             }
 
+            // Looked up again now, after the downloads: a window may have settled live (or
+            // been rebuilt) meanwhile, and a live example must never be replaced.
+            let keptNow = keptTickers(in: context, at: delay)
+            let replaceable = Dictionary(((try? context.fetch(FetchDescriptor<TrainingExample>())) ?? [])
+                .filter { !keptNow.contains($0.ticker) }.map { ($0.ticker, $0) }, uniquingKeysWith: { first, _ in first })
             let callMids = mids[delay] ?? [:]
             var added = 0, withOdds = 0
-            for market in markets {
+            for market in markets where !keptNow.contains(market.ticker) {
                 guard let wentUp = market.settledUp, let strike = market.floorStrike,
                       var features = FeatureExtractor.historicalFeatures(
                         candles: history, at: market.openTime.addingTimeInterval(delay), strike: strike,
@@ -1143,7 +1293,7 @@ final class BotEngine {
                     features[.kalshiImplied] = FeatureExtractor.kalshiFeature(yesMid: mid)
                     withOdds += 1
                 }
-                if let old = incomplete[market.ticker] { context.delete(old) }
+                if let old = replaceable[market.ticker] { context.delete(old) }
                 context.insert(TrainingExample(ticker: market.ticker, openTime: market.openTime, wentUp: wentUp,
                                                isLive: false, callDelay: delay, features: features))
                 added += 1
@@ -1154,6 +1304,23 @@ final class BotEngine {
             log("History: \(error.localizedDescription)")
         }
         await retrain()
+    }
+
+    /// Windows whose stored example a catch-up at `delay` leaves alone (see `catchUpMayReplace`).
+    private func keptTickers(in context: ModelContext, at delay: TimeInterval) -> Set<String> {
+        let existing = (try? context.fetch(FetchDescriptor<TrainingExample>())) ?? []
+        return Set(existing.filter { example in
+            !Self.catchUpMayReplace(isLive: example.isLive, callDelay: example.callDelay,
+                                    hasKalshiOdds: !example.isLive && example.sample.features[.kalshiImplied] != nil, at: delay)
+        }.map(\.ticker))
+    }
+
+    /// Saves the market download off the main actor — unless everything was erased.
+    private func save(_ cache: HistoryCache) async {
+        guard !isErased else { return }
+        await Task.detached { cache.save() }.value
+        // Erased while it was writing: take the file back out.
+        if isErased { try? FileManager.default.removeItem(at: HistoryCache.fileURL) }
     }
 
     /// Kalshi-favorite accuracy at each call time, over every cached window with odds.
@@ -1199,6 +1366,7 @@ final class BotEngine {
         model = .starting(excluding: excludedFeatures, promoted: promoted)
         recomputeLive()
         historyGeneration += 1
+        modelGeneration += 1
         if let context = modelContext { discardOutdatedHistory(in: context) }
         await catchUpHistory()
     }
@@ -1219,7 +1387,7 @@ final class BotEngine {
 
     /// Refits the model on every stored example at the current call time, off the main actor.
     private func retrain() async {
-        guard let context = modelContext else { return }
+        guard let context = modelContext, !isErased else { return }
         guard !isTraining else {
             retrainRequested = true
             return
@@ -1242,15 +1410,23 @@ final class BotEngine {
         let samples = examples.map(\.sample)
         let excluded = excludedFeatures
         let promotedNow = promoted
-        let marks = trialMarks
+        let marks = trialMarks, markTimes = trialMarkTimes
+        let generation = modelGeneration
         // Learned weights switched on before 2.22 (with no significance check) are judged
         // afresh, as if off; the "stay on" allowance applies only to a significant switch.
         let usingLearned = model.usesLearnedWeights && model.evaluation?.gainMargin != nil
         let trained = await Task.detached(priority: .utility) {
             ModelTrainer.train(samples, excluding: excluded, promoted: promotedNow, lastTrialMarks: marks,
-                               usingLearned: usingLearned)
+                               lastTrialMarkTimes: markTimes, usingLearned: usingLearned)
         }.value
 
+        // A reset, call-time or Kalshi-odds change (or an erase) mid-fit: this model and its
+        // trials are stale. Discard them and fit again on the new state.
+        guard !isErased, generation == modelGeneration, delay == callDelay, excluded == excludedFeatures,
+              promotedNow == promoted else {
+            retrainRequested = !isErased
+            return
+        }
         model = trained
         saveModel()
         recomputeLive()
@@ -1270,8 +1446,12 @@ final class BotEngine {
     private func applyTrials(_ trials: [String: TrialResult]) {
         var changed = false
         for (raw, result) in trials {
-            guard let key = FeatureKey(rawValue: raw), result.counts else { continue }
+            guard let key = FeatureKey(rawValue: raw) else { continue }
+            // An old pool-size mark becomes a time mark the first time it's used.
+            if trialMarkTimes[raw] == nil, trialMarks[raw] != nil, let time = result.markTime { trialMarkTimes[raw] = time }
+            guard result.counts else { continue }
             if let mark = result.mark { trialMarks[raw] = mark }
+            if let time = result.markTime { trialMarkTimes[raw] = time }
             let streak = trialStreaks[raw] ?? 0
             trialStreaks[raw] = result.isSignificantGain ? max(streak, 0) + 1 : min(streak, 0) - 1
             let current = trialStreaks[raw] ?? 0
@@ -1294,9 +1474,11 @@ final class BotEngine {
     }
 
     private func savePromotions() {
+        guard !isErased else { return }
         UserDefaults.standard.set(promoted.map(\.rawValue).sorted(), forKey: Keys.promoted)
         UserDefaults.standard.set(trialStreaks, forKey: Keys.trialStreaks)
         UserDefaults.standard.set(trialMarks, forKey: Keys.trialMarks)
+        UserDefaults.standard.set(trialMarkTimes.mapValues(\.timeIntervalSince1970), forKey: Keys.trialMarkTimes)
     }
 
     // MARK: Helpers
@@ -1309,9 +1491,10 @@ final class BotEngine {
     /// last 15–30 minutes), so the card reacts to a sudden change in pace as fast as the
     /// history showed is useful.
     var volatilityPerRootSecond: Double? {
-        let closes = candles.map(\.close)
-        if closes.count >= 31,
-           let volatility = RiskCalibration.volatility(closes: Array(closes.suffix(61)), halfLife: riskCalibration?.volatilityHalfLife) {
+        // Only the unbroken run of minutes, as the calibration was fitted on: a missing
+        // minute isn't a one-minute move.
+        if candles.count >= 31,
+           let volatility = RiskCalibration.volatility(candles: candles, halfLife: riskCalibration?.volatilityHalfLife) {
             return volatility
         }
         return Indicators.realizedVolatility(ticks.map { (time: $0.time, price: $0.price) })
@@ -1354,6 +1537,7 @@ final class BotEngine {
     }
 
     private func saveRiskLog() {
+        guard !isErased else { return }
         let log = riskLog
         Task.detached { log.save() }
     }
@@ -1361,14 +1545,15 @@ final class BotEngine {
     /// Refits the card's corrections from the saved history, at most hourly.
     private func refitRiskCalibration(from cache: HistoryCache) async {
         if let fitted = riskCalibration?.fittedAt, Date.now.timeIntervalSince(fitted) < 3600 { return }
-        guard let calibration = await Task.detached(operation: { RiskCalibration.best(from: cache) }).value else { return }
+        guard let calibration = await Task.detached(operation: { RiskCalibration.best(from: cache) }).value,
+              !isErased else { return }
         riskCalibration = calibration
         if let data = try? JSONEncoder().encode(calibration) {
             UserDefaults.standard.set(data, forKey: Keys.riskCalibration)
         }
         let e = calibration.evaluation
         let weighting = calibration.volatilityHalfLife.map { "\(Int($0))-min half-life" } ?? "last hour, equal"
-        log("Reversal risk recalibrated on \(calibration.windows) windows (\(weighting) volatility): held-out Brier \(String(format: "%.4f", calibration.score)) vs. Kalshi \(String(format: "%.4f", e.kalshi)) and fixed \(String(format: "%.4f", e.fixedFlip))\(calibration.blend != nil ? "; blending Kalshi's price" : "")")
+        log("Reversal risk recalibrated on \(calibration.windows) windows (\(weighting) volatility): held-out Brier \(String(format: "%.4f", calibration.score)) vs. Kalshi \(String(format: "%.4f", e.kalshi)) and fixed \(String(format: "%.4f", e.fixedFlipWithKalshi ?? e.fixedFlip))\(calibration.blend != nil ? "; blending Kalshi's price" : "")")
     }
 
     /// Completed 1-minute candles from the 1-second ticks. Starts at the first full
@@ -1406,6 +1591,7 @@ final class BotEngine {
     }
 
     private func saveModel() {
+        guard !isErased else { return }
         if let data = try? JSONEncoder().encode(model) {
             UserDefaults.standard.set(data, forKey: Keys.model)
         }

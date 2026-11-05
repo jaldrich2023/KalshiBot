@@ -11,34 +11,51 @@ import AppKit
 
 @main
 struct KalshiBotApp: App {
-    @State private var engine = BotEngine()
+    // The first stored property: its initializer runs before the others (and before the
+    // data store opens), so the launch steps in `bootstrap` come first.
+    @State private var engine: BotEngine = {
+        _ = KalshiBotApp.bootstrap
+        return BotEngine()
+    }()
     @State private var updates: UpdateChecker
     @State private var installReporter: InstallReporter
     @State private var reports = ReportClient()
 
     init() {
-        Self.quitOtherInstances()
         let updates = UpdateChecker()
         _updates = State(initialValue: updates)
         _installReporter = State(initialValue: InstallReporter(updates: updates))
-        AppLog.shared.start()
-        // Crash capture writes a local file only; whether it's sent is decided at the next
-        // launch (the opt-in, or the crash prompt). Unit tests run inside this app; their
-        // process isn't the app's, so it's left alone.
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
-            CrashCapture.install()
-        }
     }
+
+    /// Unit tests run inside this app. The test host must leave the live copy, crash
+    /// capture and the bot alone.
+    static let isTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
+    /// Runs once, before anything else: the log, crash capture (so even a crash opening the
+    /// data store is recorded — it writes a local file only; whether it's sent is decided
+    /// at the next launch), then any other running copy is asked to quit before this one
+    /// opens the data store.
+    private static let bootstrap: Void = {
+        AppLog.shared.start()
+        guard !isTestHost else { return }
+        CrashCapture.install()
+        quitOtherInstances()
+    }()
 
     /// Two copies of the bot would both write the prediction log, settings and model.
     /// macOS normally prevents a second copy, but builds launched from Xcode don't, so
-    /// any other running copy is asked to quit.
+    /// any other running copy is asked to quit — and given a few seconds to finish
+    /// writing and close the data store.
     private static func quitOtherInstances() {
         guard let bundleID = Bundle.main.bundleIdentifier else { return }
         let current = ProcessInfo.processInfo.processIdentifier
-        for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-        where app.processIdentifier != current {
-            app.terminate()
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != current }
+        guard !others.isEmpty else { return }
+        others.forEach { $0.terminate() }
+        let deadline = Date.now.addingTimeInterval(5)
+        while others.contains(where: { !$0.isTerminated }), Date.now < deadline {
+            RunLoop.current.run(until: Date.now.addingTimeInterval(0.1))
         }
     }
 

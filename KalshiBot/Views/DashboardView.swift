@@ -10,68 +10,51 @@ struct DashboardView: View {
     @Environment(BotEngine.self) private var engine
     let records: [PredictionRecord]
 
-    /// Reads `settledCount` so the accuracy redraws as soon as a window settles, even
-    /// before SwiftData's query notices the changed record.
-    private var stats: AccuracyStats {
-        _ = engine.settledCount
-        return AccuracyStats(records: engine.calls(records))
-    }
-
-    private var currentRecord: PredictionRecord? {
-        guard let ticker = engine.currentMarket?.ticker else { return nil }
-        return records.first { $0.ticker == ticker }
-    }
-
-    /// Measured width of the dashboard content, for the shared column grid.
-    @State private var contentWidth: CGFloat = 0
-    /// Measured height of the dashboard content; the strategy sidebar matches it.
+    /// One of five equal columns, from the scroll view's own width. The top-row cards each
+    /// take one; the candle-pattern card beside the candle chart takes one too, so it lines
+    /// up with the card above. Measured from the container, not the content the columns
+    /// make up, so it can't feed back into itself (or collapse to 0 with no cards yet).
+    @State private var columnWidth: CGFloat = 0
+    /// Measured height of the dashboard content; the strategy sidebar matches it. It sizes
+    /// only the sidebar, outside the scroll view, so it doesn't feed back into the content.
     @State private var contentHeight: CGFloat = 0
-    /// Height the window needs to show the whole dashboard without scrolling
-    /// (content + padding + the toolbar inset). The app window sizes itself to this.
-    @AppStorage("dashboardRequiredHeight") private var requiredHeight: Double = 0
-    @State private var topInset: CGFloat = 0
-    /// Measured height of the candle chart's row; the 60s average chart matches it.
-    @State private var candleRowHeight: CGFloat = 0
+    /// Height of the scroll view, so the sidebar never runs past the window.
+    @State private var visibleHeight: CGFloat = 0
 
-    /// One of five equal columns. The top-row cards each take one; the candle-pattern
-    /// card beside the candle chart takes one too, so it lines up with the card above.
     private static let columns: CGFloat = 5
-    private var columnWidth: CGFloat {
-        max((contentWidth - (Self.columns - 1) * Theme.spacing) / Self.columns, 0)
-    }
+    private static let padding: CGFloat = 20
 
     var body: some View {
+        // Looked up once per update and shared by every card that needs it.
+        let market = engine.currentMarket
+        let currentRecord = market.flatMap { market in records.first { $0.ticker == market.ticker } }
         HStack(alignment: .top, spacing: 0) {
-            dashboard
+            dashboard(market: market, record: currentRecord)
             // The strategy sidebar stays pinned to the right edge while the dashboard scrolls.
-            if let market = engine.currentMarket {
+            if let market {
                 StrategyCard(market: market, record: currentRecord)
                     // Exactly as tall as the cards on the left combined.
-                    .frame(width: 400, height: contentHeight > 0 ? contentHeight : nil)
-                    .padding([.top, .trailing], 20)
+                    .frame(width: 400, height: sidebarHeight)
+                    .padding([.top, .trailing], Self.padding)
             }
         }
-        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { topInset = $0 }
-        .onChange(of: contentHeight) { updateRequiredHeight() }
-        .onChange(of: topInset) { updateRequiredHeight() }
     }
 
-    private func updateRequiredHeight() {
-        guard contentHeight > 0 else { return }
-        let needed = Double((contentHeight + 40 + topInset).rounded(.up))
-        // Ignore sub-point jitter so the window doesn't resize for nothing.
-        if abs(needed - requiredHeight) >= 1 { requiredHeight = needed }
+    private var sidebarHeight: CGFloat? {
+        guard contentHeight > 0 else { return nil }
+        guard visibleHeight > 0 else { return contentHeight }
+        return max(min(contentHeight, visibleHeight - 2 * Self.padding), 0)
     }
 
-    private var dashboard: some View {
+    private func dashboard(market: KalshiMarket?, record: PredictionRecord?) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.spacing) {
                 // fixedSize + maxHeight: .infinity stretches each card to the tallest in its row.
                 HStack(alignment: .top, spacing: Theme.spacing) {
-                    windowPanel.frame(width: columnWidth)
-                    predictionPanel.frame(width: columnWidth)
+                    CurrentWindowPanel().frame(width: columnWidth)
+                    PredictionPanel(record: record).frame(width: columnWidth)
                     Group {
-                        if let market = engine.currentMarket {
+                        if let market {
                             ReversalRiskCard(market: market)
                         } else {
                             Panel(title: "Reversal Risk", systemImage: "arrow.triangle.2.circlepath") {
@@ -80,49 +63,104 @@ struct DashboardView: View {
                         }
                     }
                     .frame(width: columnWidth)
-                    AccuracyPanel(stats: stats, skipped: records.filter { $0.isResolved && engine.isNoCall($0) }.count)
-                        .frame(width: columnWidth)
-                    ModelPanel(stats: stats, records: records).frame(width: columnWidth)
+                    StatsPanels(records: records, columnWidth: columnWidth)
                 }
                 .fixedSize(horizontal: false, vertical: true)
-                if let market = engine.currentMarket {
-                    // As tall as the candle row below, so the two charts match.
-                    WindowPriceChart(market: market, record: currentRecord)
-                        .frame(height: candleRowHeight > 0 ? candleRowHeight : nil)
-                        .fixedSize(horizontal: false, vertical: candleRowHeight == 0)
-                    HStack(alignment: .top, spacing: Theme.spacing) {
-                        WindowCandleChart(market: market)
-                        CandlePatternCard(market: market)
-                            .frame(width: columnWidth)
+                if let market {
+                    // The 60s average chart and the candle row are laid out together at
+                    // one shared height, so the two charts match.
+                    MatchedHeightRows(spacing: Theme.spacing) {
+                        WindowPriceChart(market: market, record: record)
+                        HStack(alignment: .top, spacing: Theme.spacing) {
+                            WindowCandleChart(market: market)
+                            CandlePatternCard(market: market)
+                                .frame(width: columnWidth)
+                        }
                     }
-                    .fixedSize(horizontal: false, vertical: true)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { candleRowHeight = $0 }
                 }
             }
-            .onGeometryChange(for: CGSize.self) { $0.size } action: {
-                contentWidth = $0.width
-                contentHeight = $0.height
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                // Ignore sub-point jitter.
+                if abs(height - contentHeight) >= 1 { contentHeight = height }
             }
-            .padding(20)
+            .padding(Self.padding)
         }
         .scrollContentBackground(.hidden)
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+            // Whole points, so sub-point jitter doesn't re-lay the columns.
+            let width = max(((size.width - 2 * Self.padding - (Self.columns - 1) * Theme.spacing) / Self.columns).rounded(.down), 0)
+            if width != columnWidth { columnWidth = width }
+            if abs(size.height - visibleHeight) >= 1 { visibleHeight = size.height }
+        }
+    }
+}
+
+/// Stacks its rows at one shared height — the tallest row's ideal height at the offered
+/// width — sizing them together in one pass instead of measuring one row and copying its
+/// height to the other.
+private struct MatchedHeightRows: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? subviews.map { $0.sizeThatFits(.unspecified).width }.max() ?? 0
+        let height = rowHeight(width: width, subviews: subviews)
+        let gaps = spacing * CGFloat(max(subviews.count - 1, 0))
+        return CGSize(width: width, height: height * CGFloat(subviews.count) + gaps)
     }
 
-    // MARK: Panels
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let height = rowHeight(width: bounds.width, subviews: subviews)
+        var y = bounds.minY
+        for subview in subviews {
+            subview.place(at: CGPoint(x: bounds.minX, y: y), proposal: ProposedViewSize(width: bounds.width, height: height))
+            y += height + spacing
+        }
+    }
 
-    private var windowPanel: some View {
+    private func rowHeight(width: CGFloat, subviews: Subviews) -> CGFloat {
+        subviews.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }.max() ?? 0
+    }
+}
+
+/// The accuracy and model cards: the only parts of the dashboard that need `AccuracyStats`,
+/// so live price ticks elsewhere don't recompute it.
+private struct StatsPanels: View {
+    @Environment(BotEngine.self) private var engine
+    let records: [PredictionRecord]
+    let columnWidth: CGFloat
+
+    var body: some View {
+        // Reads `settledCount` so the accuracy redraws as soon as a window settles, even
+        // before SwiftData's query notices the changed record.
+        let _ = engine.settledCount
+        let stats = AccuracyStats(records: engine.calls(records))
+        AccuracyPanel(stats: stats, skipped: records.filter { $0.isResolved && engine.isNoCall($0) }.count)
+            .frame(width: columnWidth)
+        ModelPanel(stats: stats, records: records).frame(width: columnWidth)
+    }
+}
+
+// MARK: Panels
+
+/// The live window: price, target, sources. Its own view, so the several-a-second price
+/// updates redraw only this card.
+private struct CurrentWindowPanel: View {
+    @Environment(BotEngine.self) private var engine
+
+    var body: some View {
         Panel(title: "Current Window", systemImage: "clock") {
             if let spot = engine.spot {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(BotEngine.usd(spot))
                         .heroNumber()
                     if let strike = engine.currentMarket?.floorStrike {
-                        let diff = spot - strike
-                        Label((diff >= 0 ? "+" : "") + BotEngine.usd(diff) + " vs. target",
-                              systemImage: diff >= 0 ? "arrow.up.right" : "arrow.down.right")
+                        // Rounded to the cent shown first, so −$0.004 reads as an even $0.00.
+                        let diff = WindowChart.centsRounded(spot - strike)
+                        Label(signedUSD(diff) + " vs. target",
+                              systemImage: diff > 0 ? "arrow.up.right" : (diff < 0 ? "arrow.down.right" : "equal"))
                             .font(.callout.weight(.medium))
                             .monospacedDigit()
-                            .foregroundStyle(diff >= 0 ? .green : .red)
+                            .foregroundStyle(diff > 0 ? .green : (diff < 0 ? .red : .secondary))
                     }
                 }
                 .accessibilityElement(children: .combine)
@@ -169,7 +207,7 @@ struct DashboardView: View {
                     SourceList(statuses: engine.sourceStatuses, calibration: engine.priceCalibration)
                     if engine.calibrationSampleCount > 0 {
                         LabeledContent("BRTI calibration") {
-                            Text("\(engine.priceCalibration >= 0 ? "+" : "−")\(BotEngine.usd(abs(engine.priceCalibration)))")
+                            Text(signedUSD(engine.priceCalibration))
                         }
                         .infoTip("BRTI calibration", "Added to the exchange composite so it tracks CF Benchmarks' BRTI, which Kalshi settles on. It's the median gap between the composite and Kalshi's official target over the last \(engine.calibrationSampleCount) window opens, and it updates at each new open.")
                     }
@@ -193,10 +231,16 @@ struct DashboardView: View {
             }
         }
     }
+}
 
-    private var predictionPanel: some View {
+/// The locked call and the live odds beside it.
+private struct PredictionPanel: View {
+    @Environment(BotEngine.self) private var engine
+    let record: PredictionRecord?
+
+    var body: some View {
         Panel(title: "Prediction", systemImage: "scope") {
-            if let record = currentRecord, engine.isNoCall(record) {
+            if let record, engine.isNoCall(record) {
                 Label("NO CALL", systemImage: "minus.circle")
                     .font(.system(size: 26, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
@@ -208,7 +252,7 @@ struct DashboardView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if let record = currentRecord {
+            } else if let record {
                 PredictionBadge(probabilityUp: record.probabilityUp)
                 Text("Locked \(record.predictedAt.formatted(date: .omitted, time: .standard)) · \(Int(record.predictedAt.timeIntervalSince(record.openTime)))s after open")
                     .infoTip("Call time", "Calls lock \(engine.callDelayMinutes) min after the open — the same moment the model's history is built at, so live calls and training examples are like for like. After it locks, the call never changes; the live figures below keep updating. Change the minute under Call at in the Strategy card.")
@@ -302,7 +346,7 @@ struct SourceList: View {
                     Image(systemName: "scope").foregroundStyle(.tint)
                     Text("Index est.").fontWeight(.semibold)
                     Text(composite.map { BotEngine.usd($0 + calibration) } ?? "—").fontWeight(.semibold)
-                    Text("\(calibration >= 0 ? "+" : "−")\(BotEngine.usd(abs(calibration)))")
+                    Text(signedUSD(calibration))
                         .foregroundStyle(.secondary)
                     Text("")
                 }
@@ -333,7 +377,7 @@ struct SourceList: View {
         var parts = ["\(status.source.title): \(label(status.state))" + (isOut(status.state) ? " for \(duration(status))." : "."),
                      help(status.state)]
         if status.offset != 0 {
-            parts.append("BRTI offset \(status.offset >= 0 ? "+" : "−")\(BotEngine.usd(abs(status.offset))), measured against Kalshi's official targets, is added before averaging.")
+            parts.append("BRTI offset \(signedUSD(status.offset)), measured against Kalshi's official targets, is added before averaging.")
         }
         if status.reconnects > 0 {
             parts.append("Stream reconnected \(status.reconnects) time\(status.reconnects == 1 ? "" : "s") since the bot started.")
@@ -343,8 +387,7 @@ struct SourceList: View {
 
     private func gap(_ mid: Double?) -> String {
         guard let mid, let composite else { return "" }
-        let diff = mid - composite
-        return "\(diff >= 0 ? "+" : "−")\(BotEngine.usd(abs(diff)))"
+        return signedUSD(mid - composite)
     }
 
     private func label(_ state: SourceStatus.State) -> String {
@@ -590,11 +633,11 @@ private struct AccuracyDetails: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(stats.accuracy.map(BotEngine.percent) ?? "—")
                     .heroNumber()
-                Text("\(stats.correct) correct of \(stats.total) settled" + (stats.accuracyMargin.map { " · ±\(points($0)) pts" } ?? ""))
+                Text("\(stats.correct) correct of \(stats.total) settled" + (stats.accuracyInterval.map { " · 95% range \(points($0.lowerBound))–\(points($0.upperBound))%" } ?? ""))
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            .infoTip("Accuracy", "The share of settled, counted calls that were right. The ± figure is the 95% margin of error: with few windows it's wide, so differences of a few points are usually luck.")
+            .infoTip("Accuracy", "The share of settled, counted calls that were right. The range is where the true accuracy plausibly lies (a 95% Wilson interval, which stays within 0–100% even after a run of all right or all wrong): with few windows it's wide, so differences of a few points are usually luck.")
             Divider().opacity(0.5)
             LabeledContent("Expected correct") {
                 Text("\(stats.expectedCorrect.formatted(.number.precision(.fractionLength(1)))) ± \(stats.expectedCorrectMargin.formatted(.number.precision(.fractionLength(1)))) · actual \(stats.correct)")
@@ -607,23 +650,23 @@ private struct AccuracyDetails: View {
             }
             if let market = stats.marketAccuracy {
                 LabeledContent("Kalshi favorite accuracy", value: BotEngine.percent(market))
-                    .infoTip("Kalshi favorite accuracy", "How often the side Kalshi priced above 50% at the call time won, on the same windows. This is the benchmark: the bot adds value only if it beats it.")
+                    .infoTip("Kalshi favorite accuracy", "How often the side Kalshi priced above 50% at the call time won, on the \(stats.marketTotal) of \(stats.total) windows that had a Kalshi price at the call. Windows without one count in the bot's accuracy above but not here, so for a like-for-like comparison see Edge vs. Kalshi below, which uses only windows both have. This is the benchmark: the bot adds value only if it beats it.")
             }
             if let marketBrier = stats.marketBrierScore {
                 LabeledContent("Kalshi Brier score", value: marketBrier.formatted(.number.precision(.fractionLength(4))))
-                    .infoTip("Kalshi Brier score", "The same score for Kalshi's price at the call time, on the same windows. A lower Brier score than this means the bot's probabilities were closer to the outcomes than the market's.")
+                    .infoTip("Kalshi Brier score", "The same score for Kalshi's price at the call time, on the \(stats.marketTotal) windows that had a Kalshi price at the call (the bot's score above covers all \(stats.total)). A lower Brier score than this means the bot's probabilities were closer to the outcomes than the market's.")
             }
             if let edge = stats.edgeVsMarket {
                 LabeledContent("Edge vs. Kalshi") {
-                    Text("\(edge.accuracy >= 0 ? "+" : "−")\(points(abs(edge.accuracy))) ± \(points(edge.accuracyMargin)) pts")
+                    Text("\(signedPoints(edge.accuracy)) ± \(points(edge.accuracyMargin)) pts")
                         .monospacedDigit()
                 }
-                .infoTip("Edge vs. Kalshi", "Bot accuracy minus Kalshi-favorite accuracy on the same \(edge.windows) windows, with a 95% margin of error. Only an edge whose margin doesn't cross zero is more than chance.")
+                .infoTip("Edge vs. Kalshi", "Bot accuracy minus Kalshi-favorite accuracy on the same \(edge.windows) windows, with a 95% margin of error. Accuracy can only differ where the two picked different sides — \(edge.disagreements) window\(edge.disagreements == 1 ? "" : "s") so far, the bot right on \(edge.botOnlyRight) — so the verdict below comes from an exact test on those alone.")
                 Text(edgeVerdict(edge))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .infoTip("Verdict", "Whether the edge above is bigger than its margin of error. Distinguishing a small edge from luck takes many windows: the margin shrinks with the square root of the window count.")
+                    .infoTip("Verdict", "Whether the edge above is more than chance, by an exact sign test on the windows where the bot and Kalshi picked different sides: a split that lopsided must have under a 5% chance of happening by luck. A handful can never be enough — even 4 of 4 happens by luck one time in eight. Distinguishing a small edge from luck takes many windows: the margin shrinks with the square root of the window count.")
             }
             LabeledContent("When ≥\(Int(AccuracyStats.confidentThreshold * 100))% confident") {
             Text(stats.confidentAccuracy.map { "\(BotEngine.percent($0)) (\(stats.confidentCorrect)/\(stats.confidentTotal))" } ?? "—")
@@ -673,9 +716,25 @@ private func points(_ fraction: Double) -> String {
     (fraction * 100).formatted(.number.precision(.fractionLength(1)))
 }
 
+/// Signed percentage points rounded to the tenth shown, e.g. "+7.9" or "−3.1"; a value
+/// that rounds to 0.0 shows unsigned, never "−0.0".
+private func signedPoints(_ fraction: Double) -> String {
+    let tenths = (fraction * 1000).rounded()
+    guard tenths != 0 else { return points(0) }
+    return "\(tenths > 0 ? "+" : "−")\(points(abs(tenths) / 1000))"
+}
+
+/// Dollars rounded to the cent shown, then signed, e.g. "+$1.25" or "−$0.40"; a value that
+/// rounds to $0.00 shows unsigned, never "−$0.00".
+private func signedUSD(_ value: Double) -> String {
+    let rounded = WindowChart.centsRounded(value)
+    guard rounded != 0 else { return BotEngine.usd(0) }
+    return "\(rounded > 0 ? "+" : "−")\(BotEngine.usd(abs(rounded)))"
+}
+
 private func edgeVerdict(_ edge: AccuracyStats.Edge) -> String {
     if edge.isSignificant {
-        return edge.accuracy > 0 ? "The bot is beating Kalshi by more than chance." : "Kalshi is beating the bot by more than chance."
+        return edge.botOnlyRight > edge.kalshiOnlyRight ? "The bot is beating Kalshi by more than chance." : "Kalshi is beating the bot by more than chance."
     }
     let needed = AccuracyStats.windowsNeeded(forMargin: 0.05)
     return "Not yet distinguishable from chance — about \(needed) windows give a ±5 pt margin."
@@ -691,13 +750,19 @@ private func baselinePhrase(_ model: PredictionModel) -> String {
 }
 
 /// Erases all stored data, then starts a fresh copy of the app and quits this one, so
-/// every setting comes back at its default.
-@MainActor private func eraseAndRelaunch(_ engine: BotEngine) {
+/// every setting comes back at its default. If the new copy can't be launched this one
+/// stays open and `onFailure` gets the reason, so the person isn't left with no app.
+@MainActor private func eraseAndRelaunch(_ engine: BotEngine, onFailure: @escaping @MainActor (String) -> Void) {
     engine.eraseEverything()
-    let configuration = NSWorkspace.OpenConfiguration()
-    configuration.createsNewApplicationInstance = true
-    NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in
-        Task { @MainActor in NSApplication.shared.terminate(nil) }
+    Task {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        do {
+            _ = try await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+            NSApplication.shared.terminate(nil)
+        } catch {
+            onFailure(error.localizedDescription)
+        }
     }
 }
 
@@ -708,8 +773,12 @@ struct ModelPanel: View {
     let records: [PredictionRecord]
     @State private var isConfirmingReset = false
     @State private var isConfirmingErase = false
+    /// Why the fresh copy couldn't be launched after an erase, if it couldn't.
+    @State private var relaunchFailure: String?
 
-    private func eraseAndRelaunch() { KalshiBot.eraseAndRelaunch(engine) }
+    private func eraseAndRelaunch() {
+        KalshiBot.eraseAndRelaunch(engine) { relaunchFailure = $0 }
+    }
     static let targetAccuracy = 0.70
 
     var body: some View {
@@ -823,6 +892,13 @@ struct ModelPanel: View {
                     Button("Cancel", role: .cancel) {}
                 } message: {
                     Text("This permanently deletes the prediction log and accuracy history, the training history, every setting (trading style, call time, stake, stop-loss and take-profit, and the rest), the price calibration and exchange offsets, the Reversal Risk calibration and live check, and the saved market download. The app then relaunches with default settings and downloads Kalshi's full market history again, which takes a few minutes. This can't be undone.")
+                }
+                .alert("Data erased — reopen Kalshi Bot", isPresented: Binding(get: { relaunchFailure != nil },
+                                                                               set: { if !$0 { relaunchFailure = nil } })) {
+                    Button("Quit Now") { NSApplication.shared.terminate(nil) }
+                    Button("Later", role: .cancel) {}
+                } message: {
+                    Text("Everything was erased, but a fresh copy of the app couldn't be launched (\(relaunchFailure ?? "unknown error")). Quit and reopen Kalshi Bot yourself so every setting starts from its default.")
                 }
         }
         .font(.callout)

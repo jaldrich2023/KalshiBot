@@ -69,6 +69,18 @@ private nonisolated func double(_ any: Any?) -> Double? {
 
 // MARK: - Kalshi
 
+/// One side of a fetched Kalshi order book: its best price, or `.empty` when the book was
+/// read and that side had no resting orders (no quote, rather than an unknown one).
+nonisolated enum OrderBookSide: Sendable, Equatable {
+    case empty
+    case best(Double)
+
+    var price: Double? {
+        if case .best(let price) = self { return price }
+        return nil
+    }
+}
+
 /// A KXBTC15M market ("BTC price up in next 15 mins?").
 nonisolated struct KalshiMarket: Codable, Sendable, Equatable {
     let ticker: String
@@ -80,10 +92,12 @@ nonisolated struct KalshiMarket: Codable, Sendable, Equatable {
     var floorStrike: Double?
     /// `true` while `floorStrike` is the bot's own 60s average, not Kalshi's official value.
     var strikeIsEstimate = false
-    /// Best Yes bid/ask from the live order book. The market endpoint's own quotes are
-    /// cached for ~11 seconds; the order book updates every second.
-    var liveYesBid: Double?
-    var liveYesAsk: Double?
+    /// Best Yes bid/ask from the live order book (nil = no book read yet). The market
+    /// endpoint's own quotes are cached for ~11 seconds; the order book updates every
+    /// second. Once the book has been read, an empty side means no quote: the cached
+    /// endpoint quote may already be gone, so it's used only before the first book.
+    var liveYesBid: OrderBookSide?
+    var liveYesAsk: OrderBookSide?
     let yesBidDollars: String?
     let yesAskDollars: String?
     /// Official 60s BRTI average before the close, once known.
@@ -101,8 +115,8 @@ nonisolated struct KalshiMarket: Codable, Sendable, Equatable {
         case expirationValue = "expiration_value"
     }
 
-    var yesBid: Double? { liveYesBid ?? yesBidDollars.flatMap(Double.init) }
-    var yesAsk: Double? { liveYesAsk ?? yesAskDollars.flatMap(Double.init) }
+    var yesBid: Double? { liveYesBid.map(\.price) ?? yesBidDollars.flatMap(Double.init) }
+    var yesAsk: Double? { liveYesAsk.map(\.price) ?? yesAskDollars.flatMap(Double.init) }
 
     var yesMid: Double? {
         guard let bid = yesBid, let ask = yesAsk, ask > 0, ask >= bid else { return nil }
@@ -141,17 +155,43 @@ nonisolated struct KalshiClient: Sendable {
     func settledMarkets(closedAfter date: Date) async throws -> [KalshiMarket] {
         var all: [KalshiMarket] = []
         var cursor = ""
+        var seen = Set<String>()
         repeat {
-            let url = "\(base)/markets?series_ticker=\(Self.seriesTicker)&status=settled&limit=200"
-                + "&min_close_ts=\(Int(date.timeIntervalSince1970))" + (cursor.isEmpty ? "" : "&cursor=\(cursor)")
+            let url = marketsURL(["series_ticker": Self.seriesTicker, "status": "settled", "limit": "200",
+                                  "min_close_ts": String(Int(date.timeIntervalSince1970)), "cursor": cursor])
             // History pages: five tries each, so one slow moment doesn't abandon the rebuild.
             let page = try decoder.decode(MarketsResponse.self, from: try await fetchData(url, attempts: 5))
             all += page.markets
-            cursor = page.markets.isEmpty ? "" : (page.cursor ?? "")
+            cursor = Self.nextCursor(page.cursor, pageEmpty: page.markets.isEmpty, seen: &seen) ?? ""
             // ~30 pages for 60 days; pace them so live polling keeps its share of the rate limit.
             if !cursor.isEmpty { try await Task.sleep(for: .milliseconds(150)) }
         } while !cursor.isEmpty
         return all
+    }
+
+    /// The cursor to fetch next, or nil when pagination is done: an empty page, no cursor,
+    /// or a cursor already followed (which would otherwise loop forever).
+    static func nextCursor(_ cursor: String?, pageEmpty: Bool, seen: inout Set<String>) -> String? {
+        guard !pageEmpty, let cursor, !cursor.isEmpty, seen.insert(cursor).inserted else { return nil }
+        return cursor
+    }
+
+    /// A markets-list URL with each value percent-encoded (empty values left out). Cursors
+    /// are opaque and may hold `+`, `/` or `=`, which a raw query would misread.
+    private func marketsURL(_ query: KeyValuePairs<String, String>) -> String {
+        Self.url("\(base)/markets", query: query)
+    }
+
+    static func url(_ path: String, query: KeyValuePairs<String, String>) -> String {
+        let items = query.filter { !$0.value.isEmpty }.map { "\($0.key)=\(queryEscaped($0.value))" }
+        return items.isEmpty ? path : path + "?" + items.joined(separator: "&")
+    }
+
+    /// Percent-encodes a query value, including the `+ & = / ?` URLQueryItem would leave as is.
+    static func queryEscaped(_ value: String) -> String {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "+&=/?")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
     private struct CandlestickBatch: Decodable {
@@ -169,8 +209,9 @@ nonisolated struct KalshiClient: Sendable {
                 enum CodingKeys: String, CodingKey { case closeDollars = "close_dollars" }
             }
             let endPeriodTs: Int
-            let yesBid: Quote
-            let yesAsk: Quote
+            /// Optional: a candle missing either quote is skipped, not the whole batch.
+            let yesBid: Quote?
+            let yesAsk: Quote?
             enum CodingKeys: String, CodingKey {
                 case endPeriodTs = "end_period_ts"
                 case yesBid = "yes_bid"
@@ -178,6 +219,33 @@ nonisolated struct KalshiClient: Sendable {
             }
         }
         let markets: [Market]
+    }
+
+    private static func decodeCandlesticks(_ data: Data) throws -> CandlestickBatch {
+        try JSONDecoder().decode(CandlestickBatch.self, from: data)
+    }
+
+    /// Kalshi's Yes mid at `offset` seconds after each market opened, from a candlesticks
+    /// response (the parsing half of `yesMids`, separate so it can be tested offline).
+    static func yesMids(fromCandlesticks data: Data, opens: [String: Int], offsets: [TimeInterval]) throws
+        -> [TimeInterval: [String: Double]] {
+        mids(from: try decodeCandlesticks(data), opens: opens, offsets: offsets)
+    }
+
+    private static func mids(from response: CandlestickBatch, opens: [String: Int], offsets: [TimeInterval])
+        -> [TimeInterval: [String: Double]] {
+        var mids: [TimeInterval: [String: Double]] = [:]
+        for market in response.markets {
+            guard let open = opens[market.marketTicker] else { continue }
+            for offset in offsets {
+                guard let candle = market.candlesticks.first(where: { $0.endPeriodTs == open + Int(offset) }),
+                      let bid = candle.yesBid?.closeDollars.flatMap(Double.init),
+                      let ask = candle.yesAsk?.closeDollars.flatMap(Double.init),
+                      bid > 0, ask < 1, ask >= bid else { continue }
+                mids[offset, default: [:]][market.marketTicker] = (bid + ask) / 2
+            }
+        }
+        return mids
     }
 
     /// Kalshi's Yes mid `offsets` seconds after each market opened (offsets must be
@@ -211,13 +279,16 @@ nonisolated struct KalshiClient: Sendable {
             index = end
 
             var response: CandlestickBatch?
-            for attempt in 0..<3 {
+            let attempts = 3
+            for attempt in 0..<attempts {
                 do {
                     // Batches run to a few MB, so allow longer than a normal request.
-                    response = try JSONDecoder().decode(CandlestickBatch.self, from: try await fetchData(url, timeout: 30))
+                    response = try Self.decodeCandlesticks(try await fetchData(url, timeout: 30))
                     break
                 } catch {
                     lastError = error
+                    // The same bytes would fail to decode again; and no wait after the last try.
+                    if error is DecodingError || attempt + 1 == attempts { break }
                     try? await Task.sleep(for: .seconds(1 << attempt))
                 }
             }
@@ -228,15 +299,8 @@ nonisolated struct KalshiClient: Sendable {
             checked.formUnion(batch.map(\.ticker))
 
             let opens = Dictionary(uniqueKeysWithValues: batch.map { ($0.ticker, Int($0.openTime.timeIntervalSince1970)) })
-            for market in response.markets {
-                guard let open = opens[market.marketTicker] else { continue }
-                for offset in offsets {
-                    guard let candle = market.candlesticks.first(where: { $0.endPeriodTs == open + Int(offset) }),
-                          let bid = candle.yesBid.closeDollars.flatMap(Double.init),
-                          let ask = candle.yesAsk.closeDollars.flatMap(Double.init),
-                          bid > 0, ask < 1, ask >= bid else { continue }
-                    mids[offset, default: [:]][market.marketTicker] = (bid + ask) / 2
-                }
+            for (offset, byTicker) in Self.mids(from: response, opens: opens, offsets: offsets) {
+                mids[offset, default: [:]].merge(byTicker) { _, new in new }
             }
             try? await Task.sleep(for: .milliseconds(120))
         }
@@ -257,8 +321,13 @@ nonisolated struct KalshiClient: Sendable {
 
     /// Best Yes bid and ask from the order book (real-time). Kalshi lists resting bids
     /// for Yes and for No; buying Yes means hitting the best No bid, so ask = 1 − best No bid.
-    func topOfBook(ticker: String) async throws -> (yesBid: Double?, yesAsk: Double?) {
-        let data = try await fetchData("\(base)/markets/\(ticker)/orderbook?depth=1")
+    func topOfBook(ticker: String) async throws -> (yesBid: OrderBookSide, yesAsk: OrderBookSide) {
+        try Self.topOfBook(from: try await fetchData("\(base)/markets/\(ticker)/orderbook?depth=1"))
+    }
+
+    /// Parses an order-book response. A side with no resting orders is `.empty` (Kalshi
+    /// leaves it out or sends null), so the caller doesn't fall back to a stale quote.
+    static func topOfBook(from data: Data) throws -> (yesBid: OrderBookSide, yesAsk: OrderBookSide) {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let book = (json["orderbook_fp"] ?? json["orderbook"]) as? [String: Any] else {
             throw ClientError.badResponse("Kalshi order book")
@@ -266,12 +335,35 @@ nonisolated struct KalshiClient: Sendable {
         func bestBid(_ side: String) -> Double? {
             (book[side] as? [[Any]])?.compactMap { ($0.first as? String).flatMap(Double.init) }.max()
         }
-        return (bestBid("yes_dollars"), bestBid("no_dollars").map { 1 - $0 })
+        return (bestBid("yes_dollars").map(OrderBookSide.best) ?? .empty,
+                bestBid("no_dollars").map { OrderBookSide.best(1 - $0) } ?? .empty)
     }
 
     func market(ticker: String) async throws -> KalshiMarket {
         let data = try await fetchData("\(base)/markets/\(ticker)")
         return try decoder.decode(MarketResponse.self, from: data).market
+    }
+
+    /// The window closing at `close`, checked against its close time. Tickers are Eastern
+    /// wall-clock times, so in the repeated 1–2 AM hour when clocks fall back two closes share
+    /// one; if the ticker's market closes at another time, the series' markets closing within
+    /// a minute of `close` are listed instead. Nil if none matches.
+    func market(closingAt close: Date) async throws -> KalshiMarket? {
+        if let market = try? await market(ticker: Self.ticker(closingAt: close)),
+           Self.matching([market], closingAt: close) != nil {
+            return market
+        }
+        let at = Int(close.timeIntervalSince1970)
+        let url = marketsURL(["series_ticker": Self.seriesTicker, "limit": "20",
+                              "min_close_ts": String(at - 60), "max_close_ts": String(at + 60)])
+        let page = try decoder.decode(MarketsResponse.self, from: try await fetchData(url))
+        return Self.matching(page.markets, closingAt: close)
+    }
+
+    /// The market whose close time is within a minute of `close` (the nearest, if several).
+    static func matching(_ markets: [KalshiMarket], closingAt close: Date) -> KalshiMarket? {
+        markets.filter { abs($0.closeTime.timeIntervalSince(close)) <= 60 }
+            .min { abs($0.closeTime.timeIntervalSince(close)) < abs($1.closeTime.timeIntervalSince(close)) }
     }
 }
 
@@ -416,13 +508,22 @@ nonisolated struct CompositePriceClient: Sendable {
         return exchange.quote(from: data)
     }
 
-    /// Outlier-trimmed mean of whichever exchanges answered; `nil` if none did.
+    /// No response cache: a cached ticker would look like a live quote that never moves.
+    /// Shared by the live feed's polls and streams and by the REST fallback.
+    static let uncachedSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.urlCache = nil
+        return URLSession(configuration: configuration)
+    }()
+
+    /// Outlier-trimmed mean of whichever exchanges answered; `nil` if none did. One uncached
+    /// try each with a 3s timeout, so the fallback answers quickly with prices that are live.
     func compositeMid() async -> (price: Double, sources: Int)? {
         let mids = await withTaskGroup(of: Double?.self) { group in
             for exchange in Exchange.allCases {
                 group.addTask {
-                    guard let data = try? await fetchData(exchange.url) else { return nil }
-                    return exchange.mid(from: data)
+                    await Self.fetchQuote(exchange, session: Self.uncachedSession).map { ($0.bid + $0.ask) / 2 }
                 }
             }
             var values: [Double] = []

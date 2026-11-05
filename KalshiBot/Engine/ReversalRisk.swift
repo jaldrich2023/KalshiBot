@@ -131,7 +131,13 @@ nonisolated struct ReversalRisk: Sendable, Equatable {
         let flip: Double
         let blends: Bool
         if let calibration = input.calibration, inFittedRange {
-            flip = calibration.flipProbability(raw: odds.rawFlip, kalshiFlip: kalshiFlip)
+            // The fit's raw flip came from the random walk alone (history has no tracking
+            // error), so feed it the same: the raw flip without the price uncertainty.
+            let raw = input.priceUncertainty == 0 ? odds.rawFlip
+                : SettlementOdds.estimate(price: input.price, strike: input.strike, secondsRemaining: input.secondsRemaining,
+                                          volatility: input.volatility,
+                                          settlementAverageSoFar: input.settlementAverageSoFar).rawFlip
+            flip = calibration.flipProbability(raw: raw, kalshiFlip: kalshiFlip)
             blends = calibration.blend != nil && kalshiFlip != nil
         } else {
             flip = up ? 1 - odds.probabilityUp : odds.probabilityUp

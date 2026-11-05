@@ -48,15 +48,37 @@ nonisolated struct AccuracyStats: Sendable, Equatable {
     struct Edge: Sendable, Equatable {
         /// Bot accuracy minus Kalshi-favorite accuracy (fraction, e.g. −0.08 = 8 points worse).
         var accuracy: Double
-        /// 95% margin of error on `accuracy`.
+        /// 95% margin of error on `accuracy`, for display. Never 0 once the two have
+        /// disagreed: at least 1.96·√(disagreements) / windows.
         var accuracyMargin: Double
         /// Kalshi's Brier score minus the bot's (positive = bot better).
         var brier: Double
+        /// 95% margin of error on `brier` (t-based for small samples).
         var brierMargin: Double
         var windows: Int
+        /// Windows where only the bot's side won, and where only Kalshi's favorite did. Accuracy
+        /// can differ only on these; everywhere else both were right or both wrong.
+        var botOnlyRight = 0
+        var kalshiOnlyRight = 0
+        /// Windows whose Brier scores differed at all (the bot didn't just quote Kalshi's price).
+        var brierPairs = 0
 
-        /// The difference is bigger than its margin of error.
-        var isSignificant: Bool { abs(accuracy) > accuracyMargin }
+        var disagreements: Int { botOnlyRight + kalshiOnlyRight }
+
+        /// Two-sided exact sign (McNemar) test on the disagreements: the chance of a split at
+        /// least this lopsided if each disagreement were a coin flip.
+        var accuracyPValue: Double {
+            AccuracyStats.signTestPValue(botOnlyRight, kalshiOnlyRight)
+        }
+
+        /// The accuracy difference is unlikely to be chance (exact test, p < 0.05). With only
+        /// a few disagreements it can't be, however lopsided: 4 of 4 still gives p = 0.125.
+        var isSignificant: Bool { disagreements > 0 && accuracyPValue < 0.05 }
+
+        /// The Brier difference is beyond its margin, on enough windows that differed to judge.
+        var isBrierSignificant: Bool {
+            brierPairs >= AccuracyStats.minimumPairedDifferences && abs(brier) > brierMargin
+        }
     }
     var edgeVsMarket: Edge?
 
@@ -83,10 +105,15 @@ nonisolated struct AccuracyStats: Sendable, Equatable {
 
     var accuracy: Double? { total > 0 ? Double(correct) / Double(total) : nil }
 
-    /// 95% margin of error on the bot's accuracy.
+    /// 95% Wilson score interval on the bot's accuracy: stays within 0–100% and doesn't
+    /// collapse to a point at 0% or 100%, unlike the plain ± formula.
+    var accuracyInterval: ClosedRange<Double>? {
+        total > 0 ? Self.wilsonInterval(successes: correct, total: total) : nil
+    }
+
+    /// Half the width of `accuracyInterval` — a single ± figure; never 0 once there's a window.
     var accuracyMargin: Double? {
-        guard let accuracy, total > 1 else { return nil }
-        return 1.96 * (accuracy * (1 - accuracy) / Double(total)).squareRoot()
+        accuracyInterval.map { ($0.upperBound - $0.lowerBound) / 2 }
     }
 
     /// Windows needed for a ±`margin` 95% interval on accuracy near 50%.
@@ -180,18 +207,69 @@ nonisolated struct AccuracyStats: Sendable, Equatable {
         if marketTotal > 0 { marketBrierScore = marketBrier / Double(marketTotal) }
 
         // Paired differences on the same windows: far tighter than comparing two separate accuracies.
-        func meanAndMargin(_ values: [Double]) -> (Double, Double) {
-            let n = Double(values.count)
-            let mean = values.reduce(0, +) / n
-            let variance = values.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / max(n - 1, 1)
-            return (mean, 1.96 * (variance / n).squareRoot())
-        }
         if accuracyDiffs.count >= 2 {
-            let (accuracyEdge, accuracyMargin) = meanAndMargin(accuracyDiffs)
-            let (brierEdge, brierMargin) = meanAndMargin(brierDiffs)
+            let n = Double(accuracyDiffs.count)
+            let botOnly = accuracyDiffs.count { $0 > 0 }, kalshiOnly = accuracyDiffs.count { $0 < 0 }
+            let (accuracyEdge, accuracySpread) = Self.meanAndMargin(accuracyDiffs)
+            // Most differences are 0, so the spread can be 0 (2 of 2 won by the bot): floor
+            // the margin at what the disagreements alone imply.
+            let accuracyMargin = max(accuracySpread, 1.96 * Double(botOnly + kalshiOnly).squareRoot() / n)
+            let (brierEdge, brierMargin) = Self.meanAndMargin(brierDiffs)
             edgeVsMarket = Edge(accuracy: accuracyEdge, accuracyMargin: accuracyMargin,
-                                brier: brierEdge, brierMargin: brierMargin, windows: accuracyDiffs.count)
+                                brier: brierEdge, brierMargin: brierMargin, windows: accuracyDiffs.count,
+                                botOnlyRight: botOnly, kalshiOnlyRight: kalshiOnly,
+                                brierPairs: brierDiffs.count { abs($0) >= 1e-9 })
         }
+    }
+}
+
+// MARK: Significance
+
+nonisolated extension AccuracyStats {
+
+    /// Fewest paired windows that must actually differ before a mean difference is called
+    /// significant: below this the spread itself is too poorly known to trust.
+    static let minimumPairedDifferences = 10
+
+    /// Mean of paired differences and its 95% margin, using Student's t for small samples.
+    static func meanAndMargin(_ values: [Double]) -> (mean: Double, margin: Double) {
+        let n = Double(values.count)
+        guard n > 1 else { return (values.first ?? 0, .infinity) }
+        let mean = values.reduce(0, +) / n
+        let variance = values.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / (n - 1)
+        return (mean, tCritical95(degreesOfFreedom: values.count - 1) * (variance / n).squareRoot())
+    }
+
+    /// Two-sided 95% critical value of Student's t; 1.96 (the normal value) beyond 30.
+    static func tCritical95(degreesOfFreedom df: Int) -> Double {
+        let table: [Double] = [12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
+                               2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,
+                               2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042]
+        guard df >= 1 else { return .infinity }
+        return df <= table.count ? table[df - 1] : 1.96
+    }
+
+    /// Exact two-sided sign test: 2·P(X ≥ max(b, c)) for X ~ Binomial(b + c, ½), capped at 1.
+    /// 1 when there's nothing to compare.
+    static func signTestPValue(_ b: Int, _ c: Int) -> Double {
+        let n = b + c
+        guard n > 0 else { return 1 }
+        // In log space, so thousands of disagreements don't overflow.
+        let logHalfToN = Double(n) * log(0.5)
+        let tail = (max(b, c)...n).reduce(0.0) { sum, k in
+            sum + exp(lgamma(Double(n + 1)) - lgamma(Double(k + 1)) - lgamma(Double(n - k + 1)) + logHalfToN)
+        }
+        return min(2 * tail, 1)
+    }
+
+    /// 95% Wilson score interval for `successes` of `total`, within [0, 1].
+    static func wilsonInterval(successes: Int, total: Int) -> ClosedRange<Double> {
+        guard total > 0 else { return 0...1 }
+        let z = 1.96, n = Double(total), p = Double(successes) / n
+        let denominator = 1 + z * z / n
+        let center = (p + z * z / (2 * n)) / denominator
+        let half = z / denominator * (p * (1 - p) / n + z * z / (4 * n * n)).squareRoot()
+        return max(center - half, 0)...min(center + half, 1)
     }
 }
 

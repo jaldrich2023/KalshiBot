@@ -382,8 +382,15 @@ enum WindowChart {
 
     static func differenceFromTarget(_ price: Double, market: KalshiMarket) -> String? {
         guard let strike = market.floorStrike else { return nil }
-        let diff = price - strike
-        return "\(diff >= 0 ? "+" : "")\(BotEngine.usd(diff)) vs. target"
+        let diff = centsRounded(price - strike)
+        return "\(diff > 0 ? "+" : "")\(BotEngine.usd(diff)) vs. target"
+    }
+
+    /// Rounded to the cent shown, so the sign and color follow the figure on screen:
+    /// −$0.004 becomes $0.00 (never "-$0.00").
+    nonisolated static func centsRounded(_ value: Double) -> Double {
+        let cents = (value * 100).rounded()
+        return cents == 0 ? 0 : cents / 100
     }
 }
 
@@ -420,9 +427,15 @@ extension View {
                                 switch phase {
                                 case .active(let location):
                                     let plotX = location.x - (proxy.plotFrame.map { geometry[$0].minX } ?? 0)
-                                    hoveredDate.wrappedValue = proxy.value(atX: plotX, as: Date.self)
+                                    // Snapped to the second (the data's resolution) and written
+                                    // only when it changes, so moving the pointer doesn't redraw
+                                    // the chart on every pixel.
+                                    let snapped = proxy.value(atX: plotX, as: Date.self).map {
+                                        Date(timeIntervalSince1970: $0.timeIntervalSince1970.rounded())
+                                    }
+                                    if snapped != hoveredDate.wrappedValue { hoveredDate.wrappedValue = snapped }
                                 case .ended:
-                                    hoveredDate.wrappedValue = nil
+                                    if hoveredDate.wrappedValue != nil { hoveredDate.wrappedValue = nil }
                                 }
                             }
                         if let frame = proxy.plotFrame {

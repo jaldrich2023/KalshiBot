@@ -880,7 +880,7 @@ struct PerformanceBreakdownTests {
         #expect(b.cumulative.count == 4)
     }
 
-    @Test func accuracyDecidesTheVerdictBeforeBrier() {
+    @Test func verdictFollowsTheBrierEdge() {
         let p = PerformanceBreakdown.period([window(0, bot: 0.45, market: 0.55, up: true)], id: "x", label: "x")
         #expect(p.botCorrect == 0 && p.marketCorrect == 1)
         #expect(p.verdict == .behind)
@@ -1251,12 +1251,13 @@ struct PositionEstimateTests {
                                 yesBid: up - 0.01, yesAsk: up + 0.01)
         let plan = try #require(ExitPlan.compute(calledUp: true, entry: 0.60, market: m, peakSale: nil, style: .neutral))
         let p = try #require(PositionEstimate.estimate(stake: 100, plan: plan, chanceRight: 0.62))
-        // 60¢ + 2¢ fee = 62¢ a contract → 161 contracts for $100.
-        #expect(p.contracts == 161)
-        #expect(abs(p.cost - 161 * 0.62) < 1e-9)
-        #expect(abs(p.profitIfRight - (161 - 161 * 0.62)) < 1e-9)
+        // Kalshi charges its fee once per order: 162 × 60¢ = $97.20 plus a $2.73 fee
+        // (0.07 × 162 × 0.6 × 0.4, rounded up) = $99.93. 163 would cost $100.54.
+        #expect(p.contracts == 162)
+        #expect(abs(p.cost - 99.93) < 1e-9)
+        #expect(abs(p.profitIfRight - (162 - 99.93)) < 1e-9)
         #expect(p.profitIfWrong == -p.cost)
-        #expect(abs(p.expectedProfit - (0.62 * 161 - p.cost)) < 1e-9)
+        #expect(abs(p.expectedProfit - (0.62 * 162 - p.cost)) < 1e-9)
         #expect(try #require(p.profitAtStop) < 0)
         #expect(try #require(p.profitAtTakeProfit) > 0)
         #expect(PositionEstimate.estimate(stake: 0.30, plan: plan, chanceRight: 0.62) == nil)   // under one contract
@@ -2053,7 +2054,8 @@ struct ReportClientTests {
     }
 
     @Test func aFlushStopsAtTheFirstReportThatHasToWait() async {
-        for i in 1...3 { client(StubInstallTransport([]), now: Date(timeIntervalSince1970: Double(i))).enqueue(bug("R\(i)")) }
+        // Queued seconds before the flush (well inside the 30-day limit), oldest first.
+        for i in 1...3 { client(StubInstallTransport([]), now: Date(timeIntervalSince1970: 1_762_200_000 - 10 + Double(i))).enqueue(bug("R\(i)")) }
         let transport = StubInstallTransport([.status(201), .status(503)])
         let results = await client(transport).flush(respectingBackoff: false)
         #expect(results.count == 2)

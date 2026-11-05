@@ -82,7 +82,10 @@ nonisolated final class AppLog: @unchecked Sendable {
 
     /// The last `count` lines of a log file, at most `maxBytes` long.
     static func tail(of url: URL, lines count: Int, maxBytes: Int) -> [String] {
-        guard let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) else { return [] }
+        // Lenient decoding: a crash can cut a multibyte character, and one bad byte
+        // shouldn't lose the whole log.
+        guard let data = try? Data(contentsOf: url) else { return [] }
+        let text = String(decoding: data, as: UTF8.self)
         var lines = Array(text.split(separator: "\n", omittingEmptySubsequences: true).suffix(count).map(String.init))
         while !lines.isEmpty, lines.joined(separator: "\n").utf8.count > maxBytes { lines.removeFirst() }
         return lines

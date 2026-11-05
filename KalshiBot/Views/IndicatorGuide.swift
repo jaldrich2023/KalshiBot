@@ -136,9 +136,12 @@ extension FeatureKey {
     }
 
     /// The longest interpretation this indicator can produce — used to reserve space.
-    var longestInterpretation: String {
-        stride(from: -4.0, through: 4.0, by: 0.05).map(interpretation).max { $0.count < $1.count } ?? ""
-    }
+    /// Worked out once per indicator, not on every live update.
+    var longestInterpretation: String { Self.longestInterpretations[self] ?? "" }
+
+    private static let longestInterpretations: [FeatureKey: String] = Dictionary(uniqueKeysWithValues: allCases.map { key in
+        (key, stride(from: -4.0, through: 4.0, by: 0.05).map(key.interpretation).max { $0.count < $1.count } ?? "")
+    })
 }
 
 /// How one indicator is moving the prediction.
@@ -201,7 +204,14 @@ enum IndicatorEffect {
     }
 
     /// The longest description `describe` can produce for this indicator — used to reserve space.
-    static func longestDescription(_ key: FeatureKey) -> String {
+    /// Worked out once per indicator, not on every live update.
+    static func longestDescription(_ key: FeatureKey) -> String { longestDescriptions[key] ?? "" }
+
+    private static let longestDescriptions: [FeatureKey: String] = Dictionary(uniqueKeysWithValues: FeatureKey.allCases.map {
+        ($0, computeLongestDescription($0))
+    })
+
+    private static func computeLongestDescription(_ key: FeatureKey) -> String {
         var learned = PredictionModel.starting(excluding: [])
         learned.usesLearnedWeights = true
         learned.weights[key.rawValue] = -8.88

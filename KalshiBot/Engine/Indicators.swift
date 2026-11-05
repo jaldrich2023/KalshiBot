@@ -165,9 +165,13 @@ nonisolated enum Indicators {
     /// same construction as Kalshi's settlement (simple average of the 60s of BRTI
     /// before a time). A sample is only emitted once the trailing window is actually
     /// covered: data reaching back at least `minCoverage` seconds and `minSamples` points.
-    /// - Parameter samples: ordered oldest → newest.
+    /// - Parameters:
+    ///   - samples: ordered oldest → newest.
+    ///   - maxLead: how far before the window's start the last dropped sample may be and
+    ///     still count as covering it.
     static func trailingAverage(_ samples: [(time: Date, price: Double)], window: TimeInterval = 60,
-                                minCoverage: TimeInterval = 55, minSamples: Int = 20) -> [(time: Date, average: Double)] {
+                                minCoverage: TimeInterval = 55, minSamples: Int = 20,
+                                maxLead: TimeInterval = 5) -> [(time: Date, average: Double)] {
         var result: [(time: Date, average: Double)] = []
         var start = 0
         var sum = 0.0
@@ -179,8 +183,12 @@ nonisolated enum Indicators {
                 start += 1
             }
             let count = end - start + 1
-            // Coverage: the oldest kept sample, or the one just dropped, reaches back far enough.
-            let reach = samples[end].time.timeIntervalSince(samples[max(start - 1, 0)].time)
+            // Coverage: the kept samples span far enough back, or the one just dropped sits
+            // right at the window's start (so the price there is known). A dropped sample from
+            // before a feed gap can be arbitrarily old and says nothing about the window.
+            let windowStart = samples[end].time.addingTimeInterval(-window)
+            let droppedAtStart = start > 0 && windowStart.timeIntervalSince(samples[start - 1].time) <= maxLead
+            let reach = droppedAtStart ? window : samples[end].time.timeIntervalSince(samples[start].time)
             if count >= minSamples && reach >= minCoverage {
                 result.append((samples[end].time, sum / Double(count)))
             }

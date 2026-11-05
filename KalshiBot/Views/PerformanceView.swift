@@ -12,15 +12,43 @@ import Charts
 struct PerformanceView: View {
     let records: [PredictionRecord]
 
-    // One hover group per chart (each chart has a single popover) and one shared by the
-    // cards and tables.
-    @State private var cumulativeHover = HoverDetailState()
-    @State private var hourHover = HoverDetailState()
-    @State private var heatHover = HoverDetailState()
+    /// Rebuilt only when the settled log changes, not on every hover or redraw.
+    @State private var cached: (key: RecordsKey, breakdown: PerformanceBreakdown)?
+
+    /// What the breakdown depends on, cheap to compare: how many records there are, how
+    /// many have settled with a Kalshi price, and the newest window.
+    private struct RecordsKey: Equatable {
+        let count: Int
+        let settled: Int
+        let newest: Date?
+    }
+
+    private var recordsKey: RecordsKey {
+        RecordsKey(count: records.count,
+                   settled: records.count { $0.actualUp != nil && $0.marketYesMid != nil },
+                   newest: records.map(\.openTime).max())
+    }
+
+    var body: some View {
+        // Only the first frame builds it inline; after a change the previous copy shows
+        // until the rebuilt one lands a moment later.
+        PerformanceContent(breakdown: cached?.breakdown ?? PerformanceBreakdown(records: records), records: records)
+            .onChange(of: recordsKey, initial: true) { _, key in
+                if cached?.key != key { cached = (key, PerformanceBreakdown(records: records)) }
+            }
+    }
+}
+
+/// The breakdown's cards, tables and charts. Each chart owns its hover state, so moving the
+/// pointer over one redraws only that chart.
+private struct PerformanceContent: View {
+    let breakdown: PerformanceBreakdown
+    let records: [PredictionRecord]
+
+    /// Shared by the cards and tables, so moving across a row's cells keeps one popover.
     @State private var hover = HoverDetailState()
 
     var body: some View {
-        let breakdown = PerformanceBreakdown(records: records)
         ScrollView {
             if breakdown.windows.isEmpty {
                 ContentUnavailableView("No settled windows yet", systemImage: "chart.bar.xaxis",
@@ -65,15 +93,16 @@ struct PerformanceView: View {
                     .infoTip("Bot accuracy", "The share of those windows the bot called right.")
                 metric("Kalshi favorite", BotEngine.percent(overall.marketAccuracy))
                     .infoTip("Kalshi favorite", "The share of the same windows where the side Kalshi priced above 50% at the call won — the benchmark.")
-                metric("Brier edge / window", PerformanceBreakdown.points(overall.edge), tint: tint(overall.verdict))
+                metric("Brier edge / window", PerformanceBreakdown.points(overall.edge), tint: verdictTint(overall.verdict))
                     .infoTip("Brier edge / window", "Kalshi's squared error minus the bot's, in points per window. Positive means the bot's probability was closer to the outcome; zero means it matched Kalshi's price, as it does while the model follows Kalshi's odds.")
                 VStack(alignment: .leading, spacing: 4) {
                     VerdictPill(verdict: overall.verdict)
-                    Text(overall.isSignificant ? "Larger than the noise" : "Within the noise (±\(PerformanceBreakdown.magnitude(overall.edgeMargin)) pts)")
+                    Text(overall.isSignificant ? "Larger than the noise"
+                         : overall.edgeMargin.isFinite ? "Within the noise (±\(PerformanceBreakdown.magnitude(overall.edgeMargin)) pts)" : "Within the noise")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                .infoTip("Verdict", "Whether the bot beat, trailed or matched Kalshi's price overall, and whether the gap is larger than its 95% margin of error. Within the noise means it could be luck either way.")
+                .infoTip("Verdict", "Whether the bot beat, trailed or matched Kalshi's price overall, by the Brier edge beside it (an edge that rounds to 0.00 is even), and whether the gap is larger than its 95% margin of error. Nothing counts as larger than the noise until at least \(AccuracyStats.minimumPairedDifferences) windows differ from Kalshi's price at all. Within the noise means it could be luck either way.")
                 Spacer(minLength: 0)
             }
             Text("Green marks periods where the bot's probability was closer to the outcomes than Kalshi's price; red, where Kalshi's was closer. Times are Eastern, Kalshi's clock.")
@@ -121,14 +150,14 @@ struct PerformanceView: View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("#\(rank)").heroNumber(size: 20).foregroundStyle(tint(day.period.verdict))
+                    Text("#\(rank)").heroNumber(size: 20).foregroundStyle(verdictTint(day.period.verdict))
                     Text(day.period.label).font(.headline)
                 }
                 HStack(spacing: 8) {
                     VerdictPill(verdict: day.period.verdict)
                     Text("\(PerformanceBreakdown.points(day.period.edge)) pts")
                         .font(.callout.weight(.semibold)).monospacedDigit()
-                        .foregroundStyle(tint(day.period.verdict))
+                        .foregroundStyle(verdictTint(day.period.verdict))
                 }
                 Text("✓ \(day.period.botCorrect)/\(day.period.windows) · Kalshi \(day.period.marketCorrect)\(day.period.windows < PerformanceBreakdown.reliableWindows ? " · few windows" : "")")
                     .font(.caption).monospacedDigit()
@@ -147,12 +176,12 @@ struct PerformanceView: View {
                         .foregroundStyle(.secondary)
                     Image(systemName: block.verdict == .ahead ? "arrow.up.right" : (block.verdict == .behind ? "arrow.down.right" : "equal"))
                         .font(.caption2.weight(.bold))
-                        .foregroundStyle(tint(block.verdict))
+                        .foregroundStyle(verdictTint(block.verdict))
                     Text(block.label).font(.caption)
                     Spacer(minLength: 4)
                     Text(PerformanceBreakdown.points(block.edge))
                         .font(.caption.weight(.semibold)).monospacedDigit()
-                        .foregroundStyle(tint(block.verdict))
+                        .foregroundStyle(verdictTint(block.verdict))
                     Text("✓\(block.botCorrect)/\(block.windows)")
                         .font(.caption2).monospacedDigit()
                         .foregroundStyle(block.windows < PerformanceBreakdown.reliableWindows ? .tertiary : .secondary)
@@ -235,45 +264,9 @@ struct PerformanceView: View {
 
     private func cumulativeChart(_ points: [PerformanceBreakdown.CumulativePoint]) -> some View {
         Panel(title: "Cumulative edge over Kalshi", systemImage: "chart.xyaxis.line") {
-            Chart {
-                RuleMark(y: .value("Even", 0))
-                    .foregroundStyle(.white.opacity(0.35))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                ForEach(points) { point in
-                    LineMark(x: .value("Window", point.time), y: .value("Edge", point.edgePoints))
-                        .interpolationMethod(.linear)
-                        .foregroundStyle(.tint)
-                }
-                if let hovered = cumulativeHover.hoveredID.flatMap({ id in points.first { cumulativeID($0) == id } }) {
-                    RuleMark(x: .value("Window", hovered.time))
-                        .foregroundStyle(.white.opacity(0.35))
-                    PointMark(x: .value("Window", hovered.time), y: .value("Edge", hovered.edgePoints))
-                        .foregroundStyle(.white)
-                        .symbolSize(50)
-                }
-                if let last = points.last {
-                    PointMark(x: .value("Window", last.time), y: .value("Edge", last.edgePoints))
-                        .foregroundStyle(last.edgePoints >= 0 ? .green : .red)
-                        .annotation(position: .top, alignment: .trailing) {
-                            Text("\(last.edgePoints >= 0 ? "+" : "−")\(abs(last.edgePoints).formatted(.number.precision(.fractionLength(2)))) pts")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(last.edgePoints >= 0 ? .green : .red)
-                        }
-                }
-            }
-            .chartYAxisLabel("Brier points")
-            .chartOverlay { proxy in
-                ChartHoverDetail(proxy: proxy, state: cumulativeHover, resolve: { location in
-                    // The window nearest the pointer along the time axis.
-                    guard let time = proxy.value(atX: location.x, as: Date.self) else { return nil }
-                    return points.min { abs($0.time.timeIntervalSince(time)) < abs($1.time.timeIntervalSince(time)) }
-                        .map(cumulativeID)
-                }, popup: { id in
-                    cumulativeDetail(id, points: points)
-                })
-            }
-            // Stretches to fill the card when the trends list beside it is taller.
-            .frame(minHeight: 220, idealHeight: 220, maxHeight: .infinity)
+            CumulativeEdgeChart(points: points, records: records)
+                // Stretches to fill the card when the trends list beside it is taller.
+                .frame(minHeight: 220, idealHeight: 220, maxHeight: .infinity)
             Text("Running total of the per-window edge. Rising means the bot is pulling ahead of Kalshi's price; falling, falling behind; flat, matching it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -285,41 +278,8 @@ struct PerformanceView: View {
 
     private func hourChart(_ hours: [PerformanceBreakdown.Period]) -> some View {
         Panel(title: "Hour by hour (ET, all days)", systemImage: "clock") {
-            Chart {
-                RuleMark(y: .value("Even", 0)).foregroundStyle(.white.opacity(0.35))
-                ForEach(Array(hours.enumerated()), id: \.offset) { hour, period in
-                    if period.windows > 0 {
-                        BarMark(x: .value("Hour", period.label), y: .value("Edge", period.edge * 100))
-                            .foregroundStyle(tint(period.verdict).opacity(hourOpacity(period)))
-                            .annotation(position: period.edge >= 0 ? .top : .bottom) {
-                                Text("\(period.botCorrect)/\(period.windows)")
-                                    .font(.system(size: 9).monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                            }
-                            .accessibilityLabel("\(period.label)")
-                            .accessibilityValue("\(period.windows) windows, bot right on \(period.botCorrect), Kalshi on \(period.marketCorrect), edge \(PerformanceBreakdown.points(period.edge)) points")
-                    } else {
-                        // Keep empty hours on the axis so the day reads left to right.
-                        BarMark(x: .value("Hour", period.label), y: .value("Edge", 0))
-                            .foregroundStyle(.clear)
-                    }
-                }
-            }
-            .chartXScale(domain: hours.map(\.label))
-            .chartXAxis { hourAxis(hours.map(\.label)) }
-            .chartYAxisLabel("Brier edge, points / window")
-            .chartOverlay { proxy in
-                ChartHoverDetail(proxy: proxy, state: hourHover, resolve: { location in
-                    guard let label = proxy.value(atX: location.x, as: String.self),
-                          hours.contains(where: { $0.label == label && $0.windows > 0 }) else { return nil }
-                    return label
-                }, popup: { label in
-                    if let period = hours.first(where: { $0.label == label }) {
-                        PeriodDetailView(title: "\(label) ET — all days", period: period)
-                    }
-                })
-            }
-            .frame(height: 220)
+            HourEdgeChart(hours: hours)
+                .frame(height: 220)
             Text("Bars above zero: the bot beat Kalshi's price in that hour. Labels show calls right / windows. Faded bars are within the noise.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -329,62 +289,17 @@ struct PerformanceView: View {
     // MARK: Day × hour
 
     private func heatmap(_ breakdown: PerformanceBreakdown) -> some View {
-        let days = breakdown.days.map(\.label)
-        let hours = breakdown.hours.map(\.label)
-        // Scale color to the largest gap seen, so small logs still show contrast.
-        let scale = max(breakdown.cells.map { abs($0.period.edge) }.max() ?? 0, 0.001)
+        let days = breakdown.days.count
         return Panel(title: "Day × hour", systemImage: "square.grid.3x3.fill") {
-            Chart(breakdown.cells) { cell in
-                RectangleMark(x: .value("Hour", PerformanceBreakdown.hourLabel(cell.hour)), y: .value("Day", cell.day))
-                    .foregroundStyle(heatHover.hoveredID == cell.id ? .white.opacity(0.55) : heatColor(cell.period, scale: scale))
-                    .cornerRadius(3)
-                    .annotation(position: .overlay) {
-                        Text(cell.period.verdict == .ahead ? "▲" : (cell.period.verdict == .behind ? "▼" : "="))
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.85))
-                    }
-                    .accessibilityLabel("\(cell.day), \(PerformanceBreakdown.hourLabel(cell.hour))")
-                    .accessibilityValue("\(cell.period.windows) windows, edge \(PerformanceBreakdown.points(cell.period.edge)) points")
-            }
-            .chartXScale(domain: hours)
-            .chartXAxis { hourAxis(hours) }
-            .chartYScale(domain: days.reversed())
-            .chartOverlay { proxy in
-                ChartHoverDetail(proxy: proxy, state: heatHover, resolve: { location in
-                    guard let hour = proxy.value(atX: location.x, as: String.self),
-                          let day = proxy.value(atY: location.y, as: String.self) else { return nil }
-                    return breakdown.cells.first { $0.day == day && PerformanceBreakdown.hourLabel($0.hour) == hour }?.id
-                }, popup: { id in
-                    if let cell = breakdown.cells.first(where: { $0.id == id }) {
-                        PeriodDetailView(title: "\(cell.day), \(PerformanceBreakdown.hourLabel(cell.hour)) ET", period: cell.period)
-                    }
-                })
-            }
-            // Sized by its rows, then stretched to fill the card when the hour-by-hour
-            // card beside it is taller.
-            .frame(minHeight: max(CGFloat(days.count) * 30 + 30, 90),
-                   idealHeight: max(CGFloat(days.count) * 30 + 30, 90),
-                   maxHeight: .infinity)
+            DayHourHeatmap(breakdown: breakdown)
+                // Sized by its rows, then stretched to fill the card when the hour-by-hour
+                // card beside it is taller.
+                .frame(minHeight: max(CGFloat(days) * 30 + 30, 90),
+                       idealHeight: max(CGFloat(days) * 30 + 30, 90),
+                       maxHeight: .infinity)
             Text("Each cell is one hour on one day: ▲ green, the bot was closer than Kalshi; ▼ red, Kalshi was closer; = even. Deeper color, bigger gap.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    /// Every third hour labelled, so 24 columns fit at half the window's width.
-    private func hourAxis(_ labels: [String]) -> some AxisContent {
-        AxisMarks(values: labels.enumerated().filter { $0.offset % 3 == 0 }.map(\.element)) {
-            AxisGridLine()
-            AxisValueLabel()
-        }
-    }
-
-    private func heatColor(_ period: PerformanceBreakdown.Period, scale: Double) -> Color {
-        let strength = 0.3 + 0.7 * min(abs(period.edge) / scale, 1)
-        switch period.verdict {
-        case .ahead: return .green.opacity(strength)
-        case .behind: return .red.opacity(strength)
-        case .even: return .white.opacity(0.15)
         }
     }
 
@@ -409,7 +324,7 @@ struct PerformanceView: View {
                         tableCell(id, column: 2, day) { Text("\(BotEngine.percent(day.botAccuracy)) (\(day.botCorrect))").monospacedDigit() }
                         tableCell(id, column: 3, day) { Text("\(BotEngine.percent(day.marketAccuracy)) (\(day.marketCorrect))").monospacedDigit() }
                         tableCell(id, column: 4, day) {
-                            Text("\(PerformanceBreakdown.points(day.edge)) pts").monospacedDigit().foregroundStyle(tint(day.verdict))
+                            Text("\(PerformanceBreakdown.points(day.edge)) pts").monospacedDigit().foregroundStyle(verdictTint(day.verdict))
                         }
                         tableCell(id, column: 5, day) {
                             HStack(spacing: 6) {
@@ -439,24 +354,78 @@ struct PerformanceView: View {
                 PeriodDetailView(title: period.label, period: period)
             }
     }
+}
 
-    // MARK: Hover detail
+/// Running total of the per-window edge, with a popover for the window under the pointer.
+private struct CumulativeEdgeChart: View {
+    let points: [PerformanceBreakdown.CumulativePoint]
+    /// For the hovered window's call breakdown.
+    let records: [PredictionRecord]
 
-    private func cumulativeID(_ point: PerformanceBreakdown.CumulativePoint) -> String {
-        "\(point.time.timeIntervalSince1970)"
+    @State private var hover = HoverDetailState()
+
+    var body: some View {
+        Chart {
+            RuleMark(y: .value("Even", 0))
+                .foregroundStyle(.white.opacity(0.35))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            ForEach(points) { point in
+                LineMark(x: .value("Window", point.time), y: .value("Edge", point.edgePoints))
+                    .interpolationMethod(.linear)
+                    .foregroundStyle(.tint)
+            }
+            if let hovered = hover.hoveredID.flatMap(index).map({ points[$0] }) {
+                RuleMark(x: .value("Window", hovered.time))
+                    .foregroundStyle(.white.opacity(0.35))
+                PointMark(x: .value("Window", hovered.time), y: .value("Edge", hovered.edgePoints))
+                    .foregroundStyle(.white)
+                    .symbolSize(50)
+            }
+            if let last = points.last {
+                PointMark(x: .value("Window", last.time), y: .value("Edge", last.edgePoints))
+                    .foregroundStyle(signColor(last.edgePoints / 100))
+                    .annotation(position: .top, alignment: .trailing) {
+                        Text("\(PerformanceBreakdown.points(last.edgePoints / 100)) pts")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(signColor(last.edgePoints / 100))
+                    }
+            }
+        }
+        .chartYAxisLabel("Brier points")
+        .chartOverlay { proxy in
+            ChartHoverDetail(proxy: proxy, state: hover, resolve: { location in
+                guard let time = proxy.value(atX: location.x, as: Date.self) else { return nil }
+                return nearest(to: time).map(String.init)
+            }, popup: { id in
+                detail(id)
+            })
+        }
     }
 
-    /// Hovered bars stand out; the rest fade a little while one is hovered.
-    private func hourOpacity(_ period: PerformanceBreakdown.Period) -> Double {
-        let base = period.isSignificant ? 1 : 0.7
-        guard let hovered = hourHover.hoveredID else { return base }
-        return hovered == period.label ? 1 : base * 0.45
+    /// The window nearest `time` along the time axis: a binary search, as the points are
+    /// in time order, so pointer moves don't scan the whole log.
+    private func nearest(to time: Date) -> Int? {
+        guard !points.isEmpty else { return nil }
+        var low = 0, high = points.count - 1
+        while low < high {
+            let mid = (low + high) / 2
+            if points[mid].time < time { low = mid + 1 } else { high = mid }
+        }
+        if low > 0, abs(points[low - 1].time.timeIntervalSince(time)) <= abs(points[low].time.timeIntervalSince(time)) {
+            return low - 1
+        }
+        return low
+    }
+
+    /// Ids are indexes into `points`.
+    private func index(_ id: String) -> Int? {
+        Int(id).flatMap { points.indices.contains($0) ? $0 : nil }
     }
 
     /// The hovered window's call breakdown, plus what it did to the running edge.
     @ViewBuilder
-    private func cumulativeDetail(_ id: String, points: [PerformanceBreakdown.CumulativePoint]) -> some View {
-        if let index = points.firstIndex(where: { cumulativeID($0) == id }) {
+    private func detail(_ id: String) -> some View {
+        if let index = index(id) {
             let point = points[index]
             let change = point.edgePoints - (index > 0 ? points[index - 1].edgePoints : 0)
             VStack(alignment: .leading, spacing: 0) {
@@ -469,11 +438,11 @@ struct PerformanceView: View {
                 Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 5) {
                     GridRow {
                         Text("This window's edge").foregroundStyle(.secondary)
-                        Text("\(signed(change)) pts").foregroundStyle(change >= 0 ? .green : .red)
+                        Text("\(PerformanceBreakdown.points(change / 100)) pts").foregroundStyle(signColor(change / 100))
                     }
                     GridRow {
                         Text("Running total").foregroundStyle(.secondary)
-                        Text("\(signed(point.edgePoints)) pts after window \(index + 1) of \(points.count)")
+                        Text("\(PerformanceBreakdown.points(point.edgePoints / 100)) pts after window \(index + 1) of \(points.count)")
                     }
                 }
                 .monospacedDigit()
@@ -483,18 +452,128 @@ struct PerformanceView: View {
             .fixedSize(horizontal: false, vertical: true)
         }
     }
+}
 
-    private func signed(_ points: Double) -> String {
-        "\(points >= 0 ? "+" : "−")\(abs(points).formatted(.number.precision(.fractionLength(2))))"
-    }
+/// The Brier edge for each hour of the day, across all days.
+private struct HourEdgeChart: View {
+    let hours: [PerformanceBreakdown.Period]
 
-    private func tint(_ verdict: PerformanceBreakdown.Verdict) -> Color {
-        switch verdict {
-        case .ahead: .green
-        case .behind: .red
-        case .even: .secondary
+    @State private var hover = HoverDetailState()
+
+    var body: some View {
+        Chart {
+            RuleMark(y: .value("Even", 0)).foregroundStyle(.white.opacity(0.35))
+            ForEach(Array(hours.enumerated()), id: \.offset) { hour, period in
+                if period.windows > 0 {
+                    BarMark(x: .value("Hour", period.label), y: .value("Edge", period.edge * 100))
+                        .foregroundStyle(verdictTint(period.verdict).opacity(opacity(period)))
+                        .annotation(position: period.edge >= 0 ? .top : .bottom) {
+                            Text("\(period.botCorrect)/\(period.windows)")
+                                .font(.system(size: 9).monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityLabel("\(period.label)")
+                        .accessibilityValue("\(period.windows) windows, bot right on \(period.botCorrect), Kalshi on \(period.marketCorrect), edge \(PerformanceBreakdown.points(period.edge)) points")
+                } else {
+                    // Keep empty hours on the axis so the day reads left to right.
+                    BarMark(x: .value("Hour", period.label), y: .value("Edge", 0))
+                        .foregroundStyle(.clear)
+                }
+            }
+        }
+        .chartXScale(domain: hours.map(\.label))
+        .chartXAxis { hourAxis(hours.map(\.label)) }
+        .chartYAxisLabel("Brier edge, points / window")
+        .chartOverlay { proxy in
+            ChartHoverDetail(proxy: proxy, state: hover, resolve: { location in
+                guard let label = proxy.value(atX: location.x, as: String.self),
+                      hours.contains(where: { $0.label == label && $0.windows > 0 }) else { return nil }
+                return label
+            }, popup: { label in
+                if let period = hours.first(where: { $0.label == label }) {
+                    PeriodDetailView(title: "\(label) ET — all days", period: period)
+                }
+            })
         }
     }
+
+    /// Hovered bars stand out; the rest fade a little while one is hovered.
+    private func opacity(_ period: PerformanceBreakdown.Period) -> Double {
+        let base = period.isSignificant ? 1 : 0.7
+        guard let hovered = hover.hoveredID else { return base }
+        return hovered == period.label ? 1 : base * 0.45
+    }
+}
+
+/// One cell per hour on each day, colored by who was closer.
+private struct DayHourHeatmap: View {
+    let breakdown: PerformanceBreakdown
+
+    @State private var hover = HoverDetailState()
+
+    var body: some View {
+        let days = breakdown.days.map(\.label)
+        let hours = breakdown.hours.map(\.label)
+        // Scale color to the largest gap seen, so small logs still show contrast.
+        let scale = max(breakdown.cells.map { abs($0.period.edge) }.max() ?? 0, 0.001)
+        Chart(breakdown.cells) { cell in
+            RectangleMark(x: .value("Hour", PerformanceBreakdown.hourLabel(cell.hour)), y: .value("Day", cell.day))
+                .foregroundStyle(hover.hoveredID == cell.id ? .white.opacity(0.55) : color(cell.period, scale: scale))
+                .cornerRadius(3)
+                .annotation(position: .overlay) {
+                    Text(cell.period.verdict == .ahead ? "▲" : (cell.period.verdict == .behind ? "▼" : "="))
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                .accessibilityLabel("\(cell.day), \(PerformanceBreakdown.hourLabel(cell.hour))")
+                .accessibilityValue("\(cell.period.windows) windows, edge \(PerformanceBreakdown.points(cell.period.edge)) points")
+        }
+        .chartXScale(domain: hours)
+        .chartXAxis { hourAxis(hours) }
+        .chartYScale(domain: days.reversed())
+        .chartOverlay { proxy in
+            ChartHoverDetail(proxy: proxy, state: hover, resolve: { location in
+                guard let hour = proxy.value(atX: location.x, as: String.self),
+                      let day = proxy.value(atY: location.y, as: String.self) else { return nil }
+                return breakdown.cells.first { $0.day == day && PerformanceBreakdown.hourLabel($0.hour) == hour }?.id
+            }, popup: { id in
+                if let cell = breakdown.cells.first(where: { $0.id == id }) {
+                    PeriodDetailView(title: "\(cell.day), \(PerformanceBreakdown.hourLabel(cell.hour)) ET", period: cell.period)
+                }
+            })
+        }
+    }
+
+    private func color(_ period: PerformanceBreakdown.Period, scale: Double) -> Color {
+        let strength = 0.3 + 0.7 * min(abs(period.edge) / scale, 1)
+        switch period.verdict {
+        case .ahead: return .green.opacity(strength)
+        case .behind: return .red.opacity(strength)
+        case .even: return .white.opacity(0.15)
+        }
+    }
+}
+
+/// Every third hour labelled, so 24 columns fit at half the window's width.
+private func hourAxis(_ labels: [String]) -> some AxisContent {
+    AxisMarks(values: labels.enumerated().filter { $0.offset % 3 == 0 }.map(\.element)) {
+        AxisGridLine()
+        AxisValueLabel()
+    }
+}
+
+private func verdictTint(_ verdict: PerformanceBreakdown.Verdict) -> Color {
+    switch verdict {
+    case .ahead: .green
+    case .behind: .red
+    case .even: .secondary
+    }
+}
+
+/// Green, red or neutral by the sign of an edge as displayed (one that rounds to 0.00 is neutral).
+private func signColor(_ edge: Double) -> Color {
+    let shown = PerformanceBreakdown.hundredthsOfPoints(edge)
+    return shown > 0 ? .green : (shown < 0 ? .red : .secondary)
 }
 
 /// "Beat Kalshi" / "Trailed Kalshi" / "Even", with an arrow so it never relies on color alone.

@@ -60,13 +60,16 @@ final class UpdateChecker {
         return await check()
     }
 
-    /// Check for Updates…: always checks, and reports the result even when up to date.
+    /// Check for Updates…: always checks, and shows a release even if its notice was
+    /// dismissed. A newer release shows as the notice; "up to date" and failures are
+    /// reported for the alert.
     func checkNow() async {
-        manualResult = await check()
+        let result = await check(ignoringDismissal: true)
+        if case .updateAvailable = result { manualResult = nil } else { manualResult = result }
     }
 
     @discardableResult
-    func check() async -> CheckResult {
+    func check(ignoringDismissal: Bool = false) async -> CheckResult {
         var request = URLRequest(url: config.latestReleaseURL(channel: Self.channel), timeoutInterval: 15)
         request.httpMethod = "GET"
         do {
@@ -75,7 +78,7 @@ final class UpdateChecker {
             case 200..<300:
                 defaults.set(now(), forKey: Keys.lastCheck)
                 let release = (try? JSONDecoder().decode(LatestReleaseResponse.self, from: data))?.release
-                consider(release, ignoringDismissal: false)
+                consider(release, ignoringDismissal: ignoringDismissal)
                 return newer(release).map(CheckResult.updateAvailable) ?? .upToDate
             case 404:
                 defaults.set(now(), forKey: Keys.lastCheck)

@@ -69,7 +69,7 @@ nonisolated struct SemanticVersion: Comparable, CustomStringConvertible, Sendabl
         case (false, false): break
         }
         for (a, b) in zip(lhs.preRelease, rhs.preRelease) where a != b {
-            switch (Int(a), Int(b)) {
+            switch (numericValue(a), numericValue(b)) {
             case let (x?, y?): return x < y          // both numeric: numerically
             case (_?, nil): return true              // numeric < alphanumeric
             case (nil, _?): return false
@@ -86,6 +86,12 @@ nonisolated struct SemanticVersion: Comparable, CustomStringConvertible, Sendabl
 
     private static func isValidIdentifier(_ id: String) -> Bool {
         !id.isEmpty && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
+    }
+
+    /// A numeric identifier's value. Only all-digit identifiers are numeric: `Int("-1")`
+    /// would accept "-1", which SemVer treats as alphanumeric.
+    private static func numericValue(_ id: String) -> Int? {
+        !id.isEmpty && id.allSatisfy(\.isASCIIDigit) ? Int(id) : nil
     }
 
     /// Numeric identifiers must not have leading zeros ("0" itself is fine).

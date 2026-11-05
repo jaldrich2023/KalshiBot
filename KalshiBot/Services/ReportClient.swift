@@ -131,7 +131,13 @@ final class ReportClient {
         var created: Date
         var attempts: Int
         var nextAttempt: Date
+        /// The user chose to send this one (the crash prompt's Send), so it goes even with
+        /// automatic reports off. Optional so older outbox files still decode.
+        var userApproved: Bool?
     }
+
+    /// A queued report older than this is dropped rather than retried.
+    static let maxAge: TimeInterval = 30 * 24 * 3600
 
     static var defaultOutbox: URL {
         (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -196,11 +202,12 @@ final class ReportClient {
 
     /// Puts a report in the outbox without trying it first (for example, a crash
     /// collected at launch, sent by the next flush).
-    func enqueue(_ report: Report, attempts: Int = 0) {
+    func enqueue(_ report: Report, attempts: Int = 0, userApproved: Bool = false) {
         try? FileManager.default.createDirectory(at: outbox, withIntermediateDirectories: true)
         let date = now()
         let item = OutboxItem(report: prepared(report), created: date, attempts: attempts,
-                              nextAttempt: date.addingTimeInterval(Self.backoff(afterAttempts: attempts)))
+                              nextAttempt: date.addingTimeInterval(Self.backoff(afterAttempts: attempts)),
+                              userApproved: userApproved ? true : nil)
         let name = "\(Int(date.timeIntervalSince1970 * 1000))-\(UUID().uuidString).json"
         try? JSONEncoder().encode(item).write(to: outbox.appending(path: name), options: .atomic)
         trimOutbox()
@@ -228,24 +235,51 @@ final class ReportClient {
         isFlushing = true
         defer { isFlushing = false }
         var results: [SendResult] = []
-        for (url, var item) in queued() where !respectingBackoff || item.nextAttempt <= now() {
-            switch await post(item.report) {
-            case .success(let id):
-                try? FileManager.default.removeItem(at: url)
-                results.append(.sent(id: id))
-            case .permanent(let status):
-                logger.warning("Report \(item.report.title, privacy: .public) refused (HTTP \(status)); dropping it")
-                try? FileManager.default.removeItem(at: url)
-                results.append(.rejected(status: status))
-            case .retry(let reason):
-                item.attempts += 1
-                item.nextAttempt = now().addingTimeInterval(Self.backoff(afterAttempts: item.attempts))
-                try? JSONEncoder().encode(item).write(to: url, options: .atomic)
-                results.append(.queued(reason: reason))
-                return results
-            }
+        for (url, item) in queued() where !respectingBackoff || item.nextAttempt <= now() {
+            guard let result = await attempt(item, at: url) else { continue }
+            results.append(result)
+            if case .queued = result { return results }
         }
         return results
+    }
+
+    /// Retries one queued report now — the form's Retry Now. Nil if it's no longer in the
+    /// outbox (a flush already sent or dropped it).
+    func resend(_ report: Report) async -> SendResult? {
+        guard config.hasKey else { return .disabled }
+        guard !isFlushing else { return .queued(reason: "It's being retried right now") }
+        let ready = prepared(report)
+        guard let (url, item) = queued().first(where: { $0.item.report == ready }) else { return nil }
+        isFlushing = true
+        defer { isFlushing = false }
+        return await attempt(item, at: url)
+    }
+
+    /// Posts one queued report and updates the outbox: deleted when sent or refused,
+    /// rescheduled when it has to wait. Nil when it was dropped without sending — too old,
+    /// or an automatic report after the user turned automatic reports off.
+    private func attempt(_ queuedItem: OutboxItem, at url: URL) async -> SendResult? {
+        var item = queuedItem
+        let automatic = item.report.kind == .crash || item.report.kind == .telemetry
+        if now().timeIntervalSince(item.created) > Self.maxAge
+            || (automatic && item.userApproved != true && !Self.automaticReportsEnabled(defaults)) {
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        }
+        switch await post(item.report) {
+        case .success(let id):
+            try? FileManager.default.removeItem(at: url)
+            return .sent(id: id)
+        case .permanent(let status):
+            logger.warning("Report \(item.report.title, privacy: .public) refused (HTTP \(status)); dropping it")
+            try? FileManager.default.removeItem(at: url)
+            return .rejected(status: status)
+        case .retry(let reason):
+            item.attempts += 1
+            item.nextAttempt = now().addingTimeInterval(Self.backoff(afterAttempts: item.attempts))
+            try? JSONEncoder().encode(item).write(to: url, options: .atomic)
+            return .queued(reason: reason)
+        }
     }
 
     /// Retries the outbox every 10 minutes while the app runs.
@@ -284,10 +318,13 @@ final class ReportClient {
             case 200..<300:
                 let id = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["id"].map { "\($0)" }
                 return .success(id)
-            case 401, 413:
-                return .permanent(response.statusCode)
+            case 408:
+                return .retry("The server timed out")
             case 429:
                 return .retry("The server is busy (rate limited)")
+            case 400..<500:
+                // 401 bad key, 413 too large, 400/403/404/422 invalid: retrying won't help.
+                return .permanent(response.statusCode)
             default:
                 return .retry("The server returned HTTP \(response.statusCode)")
             }

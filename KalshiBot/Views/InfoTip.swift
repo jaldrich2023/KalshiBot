@@ -28,6 +28,8 @@ final class InfoTipCenter {
     /// The pointer is over tip `id`; it opens after a short rest.
     func enter(_ id: UUID) {
         guard hoveredID != id else { return }
+        // Moving onto another tip (a neighbour, or one nested inside) closes the open one.
+        if let shownID, shownID != id { self.shownID = nil }
         hoveredID = id
         dwellTask?.cancel()
         dwellTask = Task { [weak self] in
@@ -41,10 +43,12 @@ final class InfoTipCenter {
 
     /// The pointer left tip `id`.
     func leave(_ id: UUID) {
+        // Close this tip's popover even if the pointer has since entered another tip
+        // (nested tips leave in either order), so none is left stuck open.
+        if shownID == id { shownID = nil }
         guard hoveredID == id else { return }
         hoveredID = nil
         dwellTask?.cancel()
-        if shownID == id { shownID = nil }
     }
 
     func dismiss(_ id: UUID) {

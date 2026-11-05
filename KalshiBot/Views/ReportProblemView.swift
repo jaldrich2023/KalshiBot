@@ -37,8 +37,17 @@ struct ReportProblemView: View {
     @State private var isPreviewing = false
     @State private var status = Status.idle
 
+    /// The report exactly as last submitted, so Retry Now resends that one (the logs move on).
+    @State private var submitted: Report?
+
     private var canSend: Bool {
-        !title.trimmingCharacters(in: .whitespaces).isEmpty && status != .sending && reports.isConfigured
+        guard !title.trimmingCharacters(in: .whitespaces).isEmpty, reports.isConfigured else { return false }
+        switch status {
+        // Sent or waiting in the outbox: edit the form to send another (Retry Now resends
+        // a waiting one), so the same report is never queued twice.
+        case .sending, .sent, .queued: return false
+        default: return true
+        }
     }
 
     var body: some View {
@@ -82,6 +91,12 @@ struct ReportProblemView: View {
         }
         .sheet(isPresented: $isPreviewing) {
             ReportPreview(text: previewText) { isPreviewing = false }
+        }
+        .onChange(of: [kind.rawValue, title, details, contact]) {
+            switch status {
+            case .sent, .queued: status = .idle
+            default: break
+            }
         }
     }
 
@@ -131,7 +146,11 @@ struct ReportProblemView: View {
     }
 
     private func submit() async {
+        // A second click while sending (or after sending) does nothing.
+        guard canSend else { return }
         status = .sending
+        let report = report
+        submitted = report
         switch await reports.send(report) {
         case .sent(let id): status = .sent(id: id)
         case .queued(let reason): status = .queued(reason: reason)
@@ -142,11 +161,17 @@ struct ReportProblemView: View {
     }
 
     private func retry() async {
+        guard status != .sending, let submitted else { return }
         status = .sending
-        let results = await reports.flush(respectingBackoff: false)
-        if case .sent(let id)? = results.last { status = .sent(id: id) }
-        else if case .queued(let reason)? = results.last { status = .queued(reason: reason) }
-        else { status = .sent(id: nil) }
+        switch await reports.resend(submitted) {
+        case .sent(let id)?: status = .sent(id: id)
+        case .queued(let reason)?: status = .queued(reason: reason)
+        case .rejected(let code)?: status = .failed("The report was refused (HTTP \(code)).")
+        case .disabled?: status = .failed("Reporting isn't set up in this build.")
+        case nil:
+            // No longer waiting: the automatic retry got to it first.
+            status = .sent(id: nil)
+        }
     }
 }
 

@@ -13,6 +13,10 @@ final class PredictionRecord {
     var openTime: Date
     var closeTime: Date
     var predictedAt: Date
+    /// The call time the call was locked for, in seconds after the open — the setting, not
+    /// the moment it was actually made (a slow data fetch can make that a little later).
+    /// 0 on records made before 2.28.
+    var callDelay: Double = 0
 
     /// Official target (60s BRTI average before the open), from Kalshi.
     var strike: Double
@@ -40,17 +44,20 @@ final class PredictionRecord {
     // Outcome
     var actualUp: Bool?
     var settlementValue: Double?
+    /// When the result came in. Set with no `actualUp` when the window was voided (it
+    /// never settled Yes or No); such a window isn't counted anywhere.
     var resolvedAt: Date?
 
     init(ticker: String, openTime: Date, closeTime: Date, predictedAt: Date, strike: Double,
          spotAtPrediction: Double, proxyOpenAverage: Double?, probabilityUp: Double,
          marketYesMid: Double?, marketYesBid: Double? = nil, marketYesAsk: Double? = nil,
          features: [FeatureKey: Double], contributions: [FeatureKey: Double],
-         excludedFeatures: Set<FeatureKey>) {
+         excludedFeatures: Set<FeatureKey>, callDelay: Double = 0) {
         self.ticker = ticker
         self.openTime = openTime
         self.closeTime = closeTime
         self.predictedAt = predictedAt
+        self.callDelay = callDelay
         self.strike = strike
         self.spotAtPrediction = spotAtPrediction
         self.proxyOpenAverage = proxyOpenAverage
@@ -65,6 +72,9 @@ final class PredictionRecord {
     }
 
     var isResolved: Bool { actualUp != nil }
+
+    /// Closed with no Yes/No result (voided); no longer waited on, and not counted.
+    var isVoid: Bool { actualUp == nil && resolvedAt != nil }
 
     var isCorrect: Bool? { actualUp.map { $0 == predictedUp } }
 

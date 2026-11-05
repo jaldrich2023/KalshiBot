@@ -37,6 +37,13 @@ nonisolated struct TrialResult: Codable, Sendable, Equatable {
     /// Windows in the trial's pool when this counted result was made; the next counted
     /// result needs `freshWindowsPerTrial` more.
     var mark: Int?
+    /// The mark in effect after this result: the newest judged window's time if it
+    /// counted, else the previous mark's. Later results judge only windows after it — by
+    /// time, not position, so windows added further back can't push judged ones past it.
+    /// Nil before 2.28 and while there's no mark.
+    var markTime: Date?
+    /// Windows in the pool after `markTime` (0 right after a counted result).
+    var windowsSinceMark: Int?
 
     var hasEnoughData: Bool {
         if liveOnly == true { return (liveWindows ?? 0) >= ModelTrainer.minimumLiveTrialWindows }
@@ -111,6 +118,7 @@ nonisolated enum ModelTrainer {
     ///   on unless the learned weights fall clearly behind (see `decide`).
     static func train(_ samples: [TrainingSample], excluding excluded: Set<FeatureKey>,
                       promoted: Set<FeatureKey> = [], lastTrialMarks: [String: Int] = [:],
+                      lastTrialMarkTimes: [String: Date] = [:],
                       usingLearned: Bool = false, now: Date = .now) -> PredictionModel {
         let starting = PredictionModel.starting(excluding: excluded, promoted: promoted)
         let usable = starting.marketAnchored ? samples.filter { $0.features[.kalshiImplied] != nil } : samples
@@ -177,7 +185,8 @@ nonisolated enum ModelTrainer {
         let candidates = FeatureKey.promotionCandidates.filter { !excluded.contains($0) }
         for key in candidates {
             model.trials[key.rawValue] = trial(key, samples: sorted, excluding: excluded, promoted: promoted, lambda: lambda,
-                                               lastMark: lastTrialMarks[key.rawValue], testedSignals: candidates.count)
+                                               lastMark: lastTrialMarks[key.rawValue],
+                                               lastMarkTime: lastTrialMarkTimes[key.rawValue], testedSignals: candidates.count)
         }
         return model
     }
@@ -220,12 +229,14 @@ nonisolated enum ModelTrainer {
     /// widened for the number of signals tested.
     ///
     /// The judged windows are those that settled since the signal's last counted result
-    /// (`lastMark`), once there are `freshWindowsPerTrial` of them, so each counted result
-    /// is new evidence. Until then the newest 20% is judged for display, and the result
+    /// (`lastMarkTime`), once there are `freshWindowsPerTrial` of them, so each counted
+    /// result is new evidence. `lastMark` is the older pool-size mark, used only when
+    /// there's no time mark yet. Until then the newest 20% is judged for display, and the result
     /// doesn't count. Sparse signals (live-only ones like tick momentum) are judged only on
     /// the windows that have them.
     static func trial(_ key: FeatureKey, samples sorted: [TrainingSample], excluding excluded: Set<FeatureKey>,
-                      promoted: Set<FeatureKey>, lambda: Double, lastMark: Int?, testedSignals: Int) -> TrialResult {
+                      promoted: Set<FeatureKey>, lambda: Double, lastMark: Int?, lastMarkTime: Date? = nil,
+                      testedSignals: Int) -> TrialResult {
         let coverage = Double(sorted.count { $0.features[key] != nil }) / Double(max(sorted.count, 1))
         let withKey = promoted.union([key])
         let withoutKey = promoted.subtracting([key])
@@ -241,8 +252,10 @@ nonisolated enum ModelTrainer {
             }
         }
 
-        // A mark beyond the pool (history rebuilt smaller) starts over.
-        let mark = lastMark.flatMap { $0 <= pool.count ? $0 : nil }
+        // Where the fresh windows start. A time mark before every window in the pool (the
+        // history was rebuilt) starts over, as does an old pool-size mark beyond the pool.
+        let markIndex = lastMarkTime.map { time in pool.firstIndex { $0.time > time } ?? pool.count } ?? lastMark
+        let mark = markIndex.flatMap { $0 > 0 && $0 <= pool.count ? $0 : nil }
         let firstSplit = Int(Double(pool.count) * 0.8)
         let start: Int
         let counted: Bool
@@ -256,9 +269,14 @@ nonisolated enum ModelTrainer {
             start = firstSplit
             counted = false
         }
+        // The mark after this result, as a time: an old pool-size mark becomes the time of
+        // the last window it covered.
+        let markTime: Date? = counted ? pool.last?.time : mark.map { pool[$0 - 1].time }
+        let sinceMark: Int? = counted ? 0 : mark.map { pool.count - $0 }
         let fitSlice = Array(pool[..<start]), judged = Array(pool[start...])
         guard !fitSlice.isEmpty, !judged.isEmpty else {
-            return TrialResult(gain: 0, margin: 0, coverage: coverage, windows: 0, liveOnly: liveOnly, liveWindows: liveWindows)
+            return TrialResult(gain: 0, margin: 0, coverage: coverage, windows: 0, liveOnly: liveOnly, liveWindows: liveWindows,
+                               markTime: mark.map { pool[$0 - 1].time }, windowsSinceMark: mark.map { pool.count - $0 })
         }
         let anchor = fitSlice.last?.time ?? .now
         let with = fit(fitSlice, excluding: excluded, promoted: withKey, now: anchor, regularization: lambda)
@@ -271,7 +289,8 @@ nonisolated enum ModelTrainer {
         let variance = diffs.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / max(n - 1, 1)
         return TrialResult(gain: mean, margin: zScore(forTests: testedSignals) * (variance / n).squareRoot(),
                            coverage: coverage, windows: diffs.count, liveOnly: liveOnly, liveWindows: liveWindows,
-                           counted: counted, mark: counted ? pool.count : nil)
+                           counted: counted, mark: counted ? pool.count : nil,
+                           markTime: markTime, windowsSinceMark: sinceMark)
     }
 
     private static func logLoss(_ model: PredictionModel, _ sample: TrainingSample, excluding excluded: Set<FeatureKey>) -> Double {

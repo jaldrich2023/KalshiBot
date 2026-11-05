@@ -92,33 +92,42 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .alert(manualCheckTitle, isPresented: Binding(get: { updates.manualResult != nil && updates.availableUpdate == nil },
+        .alert(manualCheckTitle, isPresented: Binding(get: { updates.manualResult != nil },
                                                       set: { if !$0 { updates.manualResult = nil } })) {
             Button("OK") { updates.manualResult = nil }
         } message: {
             Text(manualCheckMessage)
         }
         .task {
-            // Unit tests run inside this app; starting the bot there would trade places with
-            // the live app on the same data, and miss or double-log windows.
-            guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
-            engine.start(context: modelContext)
-            // Once the window is up: the anonymous install notice (if it's due), the update
-            // check (at most every 6 hours), crash reports left by an earlier launch, then
-            // anything waiting in the outbox — and a retry every 10 minutes from then on.
-            await installReporter.reportIfNeeded()
-            await updates.checkIfDue()
+            // Once per launch, not per window: reopening the window must not restart a bot
+            // the user stopped. Unit tests run inside this app; starting the bot there would
+            // trade places with the live app on the same data, and miss or double-log windows.
+            guard !KalshiBotApp.isTestHost, !Self.hasStarted else { return }
+            Self.hasStarted = true
+            // Crash files from an earlier launch first: it's local, and a crash soon after
+            // launch must still be found next time.
             let crashes = crashReports
             if crashes.collect(into: reports) == 0, crashes.hasPending, reports.isConfigured {
                 showsCrashPrompt = true
             }
-            await reports.flush(respectingBackoff: false)
-            reports.startPeriodicRetry()
+            engine.start(context: modelContext)
+            // The network steps run in their own task, so closing the window doesn't cancel
+            // them: the anonymous install notice (if it's due), the update check (at most
+            // every 6 hours), then the outbox — and a retry every 10 minutes from then on.
+            Task { [installReporter, updates, reports] in
+                await installReporter.reportIfNeeded()
+                await updates.checkIfDue()
+                await reports.flush(respectingBackoff: false)
+                reports.startPeriodicRetry()
+            }
             #if DEBUG
             CrashTest.runIfRequested()
             #endif
         }
     }
+
+    /// The launch steps have run (see `.task`).
+    private static var hasStarted = false
 }
 
 extension ContentView {

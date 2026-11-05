@@ -20,9 +20,18 @@
 import Foundation
 
 nonisolated enum KalshiFees {
-    /// Kalshi's taker fee per contract: 7% × price × (1 − price), rounded up to the cent.
+    /// Kalshi's taker fee for a 1-contract order: 7% × price × (1 − price), rounded up to
+    /// the cent. For per-contract edges; a larger order is rounded once, not per contract.
     static func taker(price: Double) -> Double {
-        ((0.07 * price * (1 - price)) * 100).rounded(.up) / 100
+        taker(price: price, contracts: 1)
+    }
+
+    /// Kalshi's taker fee for one order of `contracts`: 7% × C × price × (1 − price), rounded
+    /// up to the cent once for the whole order (100 at 50¢: $1.75, not 100 × 2¢).
+    static func taker(price: Double, contracts: Int) -> Double {
+        guard contracts > 0 else { return 0 }
+        // The tolerance keeps float noise (0.07 × 100 = 7.000000000000001) from adding a cent.
+        return max((0.07 * Double(contracts) * price * (1 - price) * 100 - 1e-9).rounded(.up), 0) / 100
     }
 }
 
@@ -134,6 +143,11 @@ nonisolated struct ExitPlan: Sendable, Equatable {
     let takeProfitSale: Double
     /// The take-profit target is above the most a contract can sell for, so there's no line.
     var takeProfitUnreachable = false
+    /// The called side's bid (before the fee) now, at the stop and at the take-profit, so a
+    /// position's sale can be charged one order fee instead of a rounded fee per contract.
+    var bidNow: Double?
+    var stopBid: Double?
+    var takeProfitBid: Double?
 
     /// Already past the stop: selling now loses less than the stop allows for.
     var exitNow: Bool { saleNow <= stopSale }
@@ -149,8 +163,14 @@ nonisolated struct ExitPlan: Sendable, Equatable {
         var yesAsk: Double
     }
 
-    /// What selling the called side returns if BTC is at `x`, with `seconds` left.
+    /// What selling one contract of the called side returns if BTC is at `x`, with `seconds` left.
     static func sale(at x: Double, seconds: TimeInterval, calledUp: Bool, market m: Market) -> Double {
+        let price = bid(at: x, seconds: seconds, calledUp: calledUp, market: m)
+        return price - KalshiFees.taker(price: price)
+    }
+
+    /// The called side's bid, before the fee, if BTC is at `x` with `seconds` left.
+    static func bid(at x: Double, seconds: TimeInterval, calledUp: Bool, market m: Market) -> Double {
         func sideOdds(_ price: Double, _ seconds: TimeInterval) -> Double {
             let up = SettlementOdds.estimate(price: price, strike: m.strike, secondsRemaining: seconds,
                                              volatility: m.volatility, settlementAverageSoFar: m.settlementAverageSoFar).probabilityUp
@@ -160,8 +180,7 @@ nonisolated struct ExitPlan: Sendable, Equatable {
         let sideMid = calledUp ? (m.yesBid + m.yesAsk) / 2 : 1 - (m.yesBid + m.yesAsk) / 2
         let gap = sideMid - sideOdds(m.price, m.secondsRemaining)
         let halfSpread = max(m.yesAsk - m.yesBid, 0.01) / 2
-        let bid = min(max(sideOdds(x, seconds) + gap - halfSpread, 0.01), 0.99)
-        return bid - KalshiFees.taker(price: bid)
+        return min(max(sideOdds(x, seconds) + gap - halfSpread, 0.01), 0.99)
     }
 
     /// - Parameters:
@@ -189,12 +208,16 @@ nonisolated struct ExitPlan: Sendable, Equatable {
         // selling could ever return.
         let profitTarget = takeProfitGain.map { entry * (1 + $0) } ?? entry + style.profitCapture * max(maxSale - entry, 0)
         let unreachable = profitTarget > maxSale
+        let stop = level(for: stopTarget, calledUp: calledUp, market: m)
+        let takeProfit = !unreachable && profitTarget > saleNow ? level(for: profitTarget, calledUp: calledUp, market: m) : nil
+        func bidAt(_ x: Double?) -> Double? { x.map { bid(at: $0, seconds: m.secondsRemaining, calledUp: calledUp, market: m) } }
 
         return ExitPlan(calledUp: calledUp, entry: entry, saleNow: saleNow,
-                        stop: level(for: stopTarget, calledUp: calledUp, market: m), stopSale: stopTarget,
+                        stop: stop, stopSale: stopTarget,
                         stopIsTrailing: trailing,
-                        takeProfit: !unreachable && profitTarget > saleNow ? level(for: profitTarget, calledUp: calledUp, market: m) : nil,
-                        takeProfitSale: profitTarget, takeProfitUnreachable: unreachable)
+                        takeProfit: takeProfit,
+                        takeProfitSale: profitTarget, takeProfitUnreachable: unreachable,
+                        bidNow: bidAt(m.price), stopBid: bidAt(stop), takeProfitBid: bidAt(takeProfit))
     }
 
     /// Gain per contract the position must reach before the stop starts trailing.
@@ -244,16 +267,28 @@ nonisolated struct PositionEstimate: Sendable, Equatable {
     ///   - stake: dollars to put on the call.
     ///   - chanceRight: probability the called side settles in the money (Kalshi's mid for it).
     static func estimate(stake: Double, plan: ExitPlan, chanceRight: Double) -> PositionEstimate? {
-        let perContract = plan.entry + KalshiFees.taker(price: plan.entry)
-        guard stake > 0, perContract > 0 else { return nil }
-        let contracts = Int((stake / perContract).rounded(.down))
+        guard stake > 0, plan.entry > 0, stake.isFinite else { return nil }
+        // Kalshi rounds the fee once per order, so the most contracts the stake buys is found
+        // from the unrounded fee (a ceiling) and stepped down until price plus fee fits.
+        let unrounded = plan.entry * (1 + 0.07 * (1 - plan.entry))
+        var contracts = Int((stake / unrounded).rounded(.down))
+        func cost(_ c: Int) -> Double { Double(c) * plan.entry + KalshiFees.taker(price: plan.entry, contracts: c) }
+        while contracts > 0, cost(contracts) > stake + 1e-9 { contracts -= 1 }
         guard contracts > 0 else { return nil }
         let n = Double(contracts)
-        let cost = n * perContract
-        return PositionEstimate(contracts: contracts, entry: plan.entry, cost: cost, saleNow: n * plan.saleNow,
+        let total = cost(contracts)
+        // A sale is one order too: n × bid less one rounded fee. Without the bid (a plan built
+        // by hand), fall back to the per-contract sale values.
+        func proceeds(bid: Double?, perContract: Double) -> Double {
+            bid.map { n * $0 - KalshiFees.taker(price: $0, contracts: contracts) } ?? n * perContract
+        }
+        return PositionEstimate(contracts: contracts, entry: plan.entry, cost: total,
+                                saleNow: proceeds(bid: plan.bidNow, perContract: plan.saleNow),
                                 chanceRight: chanceRight,
-                                profitAtStop: plan.stop.map { _ in n * plan.stopSale - cost },
-                                profitAtTakeProfit: plan.takeProfit.map { _ in n * plan.takeProfitSale - cost })
+                                profitAtStop: plan.stop.map { _ in proceeds(bid: plan.stopBid, perContract: plan.stopSale) - total },
+                                profitAtTakeProfit: plan.takeProfit.map { _ in
+                                    proceeds(bid: plan.takeProfitBid, perContract: plan.takeProfitSale) - total
+                                })
     }
 }
 

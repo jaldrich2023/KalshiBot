@@ -35,6 +35,12 @@ nonisolated struct RiskCalibration: Codable, Sendable, Equatable {
         var blended = 0.0
         var fixedBreakout = 0.0
         var fittedBreakout = 0.0
+        /// The flip scores on just the snapshots with a Kalshi price, the population `kalshi`
+        /// and `blended` are scored on, so the blend is compared like for like (nil in
+        /// calibrations saved before these were kept).
+        var kalshiSnapshots: Int?
+        var fixedFlipWithKalshi: Double?
+        var fittedFlipWithKalshi: Double?
     }
 
     /// Before any fit: the fixed corrections from the Oct 31 backtest.
@@ -85,8 +91,22 @@ nonisolated struct RiskCalibration: Codable, Sendable, Equatable {
     /// Dollars per √second from 1-minute closes, oldest → newest; equally weighted, or
     /// exponentially weighted with `halfLife` minutes. Nil without enough returns.
     static func volatility(closes: [Double], halfLife: Double?) -> Double? {
-        let returns = Indicators.logReturns(closes)
-        guard returns.count >= 30, let last = closes.last, last > 0 else { return nil }
+        guard let last = closes.last else { return nil }
+        return volatility(returns: Indicators.logReturns(closes), last: last, halfLife: halfLife)
+    }
+
+    /// The same from live 1-minute candles, oldest → newest, using only the unbroken run of
+    /// minutes at the end (at most the last hour) as the history fit did: across a missing
+    /// minute a close-to-close change spans several minutes and would read as one. Nil
+    /// without 30 returns in that run.
+    static func volatility(candles: [Candle], halfLife: Double?) -> Double? {
+        let run = CandlePatterns.contiguousTail(candles).suffix(61)
+        guard let last = run.last?.close else { return nil }
+        return volatility(returns: Indicators.logReturns(run.map(\.close)), last: last, halfLife: halfLife)
+    }
+
+    private static func volatility(returns: [Double], last: Double, halfLife: Double?) -> Double? {
+        guard returns.count >= 30, last > 0 else { return nil }
         let variance: Double
         if let halfLife {
             let decay = pow(0.5, 1 / halfLife)
@@ -205,6 +225,11 @@ nonisolated struct RiskCalibration: Codable, Sendable, Equatable {
             e.fittedFlip = brier(test.map { (sigmoid(w[0] + w[1] * logit($0.rawFlip)), $0.leaderLost) })
         }
         let withKalshi = test.filter { $0.kalshiFlip != nil }
+        e.kalshiSnapshots = withKalshi.count
+        e.fixedFlipWithKalshi = brier(withKalshi.map { (SettlementOdds.calibratedFlip(raw: $0.rawFlip), $0.leaderLost) })
+        if let w = flipFit {
+            e.fittedFlipWithKalshi = brier(withKalshi.map { (sigmoid(w[0] + w[1] * logit($0.rawFlip)), $0.leaderLost) })
+        }
         e.kalshi = brier(withKalshi.map { ($0.kalshiFlip!, $0.leaderLost) })
         if let w = blendFit {
             e.blended = brier(withKalshi.map { (sigmoid(w[0] + w[1] * logit($0.rawFlip) + w[2] * logit($0.kalshiFlip!)), $0.leaderLost) })
@@ -220,7 +245,9 @@ nonisolated struct RiskCalibration: Codable, Sendable, Equatable {
         let allBlend = snapshots.filter { $0.kalshiFlip != nil }.map { (x: [logit($0.rawFlip), logit($0.kalshiFlip!)], y: $0.leaderLost) }
         let allBreakout = snapshots.flatMap { s in s.breakouts.map { (x: [logit($0.raw)], y: $0.happened) } }
         let useFlip = flipFit != nil && e.fittedFlip < e.fixedFlip
-        let useBlend = blendFit != nil && e.blended < min(e.kalshi, useFlip ? e.fittedFlip : e.fixedFlip)
+        // The blend against the alternatives on the same snapshots (all of them carry Kalshi's price).
+        let flipOnKalshiSnapshots = (useFlip ? e.fittedFlipWithKalshi : e.fixedFlipWithKalshi) ?? .nan
+        let useBlend = blendFit != nil && e.blended < min(e.kalshi, flipOnKalshiSnapshots)
         let useBreakout = breakoutFit != nil && e.fittedBreakout < e.fixedBreakout
         return RiskCalibration(flip: useFlip ? fitLogistic(allFlip) : nil,
                                blend: useBlend ? fitLogistic(allBlend) : nil,
@@ -240,10 +267,17 @@ nonisolated struct RiskCalibration: Codable, Sendable, Equatable {
             .min { $0.score < $1.score }
     }
 
-    /// The flip score the live card will actually get with this calibration.
+    /// The flip score the live card will actually get with this calibration, on the held-out
+    /// snapshots with a Kalshi price so a blend and a price-only flip are ranked on the same
+    /// population. Falls back to all snapshots when there are none (or for an older save).
     var score: Double {
-        if blend != nil { return evaluation.blended }
-        return flip != nil ? evaluation.fittedFlip : evaluation.fixedFlip
+        let e = evaluation
+        let flipOnKalshi = flip != nil ? e.fittedFlipWithKalshi : e.fixedFlipWithKalshi
+        if (e.kalshiSnapshots ?? 0) > 0, let flipOnKalshi, flipOnKalshi.isFinite {
+            return blend != nil ? e.blended : flipOnKalshi
+        }
+        if blend != nil { return e.blended }
+        return flip != nil ? e.fittedFlip : e.fixedFlip
     }
 }
 

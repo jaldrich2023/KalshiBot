@@ -76,8 +76,13 @@ struct WindowPriceChart: View {
         }
         let sigmaNow = projection.settlementSigma(secondsRemaining: market.closeTime.timeIntervalSince(now))
         let forecast = projection.forecastSettlement
+        // Each time appears once: the chart identifies these points by time. A tick taken
+        // right now gives way to the forecast, and at the close "now" is the close.
+        if range.last?.time == now { range.removeLast() }
         range.append((now, forecast - sigmaNow, forecast + sigmaNow))
-        range.append((market.closeTime, forecast - sigmaNow, forecast + sigmaNow))
+        if market.closeTime > now {
+            range.append((market.closeTime, forecast - sigmaNow, forecast + sigmaNow))
+        }
         return range
     }
 

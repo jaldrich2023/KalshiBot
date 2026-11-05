@@ -99,13 +99,14 @@ actor LivePriceFeed {
     private(set) var updateCounts: [String: Int] = [:]
     private(set) var messageCounts: [String: Int] = [:]
     private var tasks: [String: Task<Void, Never>] = [:]
+    /// Open sockets, so `stop()` can close them (`receive()` ignores task cancellation).
+    private var sockets: [String: URLSessionWebSocketTask] = [:]
+    /// The connection that currently owns each streamed quote. A loop from an older
+    /// connection (one still unwinding after `stop()`) may neither set nor clear it.
+    private var connectionIDs: [String: Int] = [:]
+    private var nextConnectionID = 0
     /// No response cache: a cached ticker would look like a live quote that never moves.
-    private let session: URLSession = {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.urlCache = nil
-        return URLSession(configuration: configuration)
-    }()
+    private let session = CompositePriceClient.uncachedSession
 
     /// Sources polled over REST because they aren't streamed.
     static let polled = CompositePriceClient.Exchange.allCases.filter { Exchange(rawValue: $0.rawValue) == nil }
@@ -124,7 +125,8 @@ actor LivePriceFeed {
     /// Polls one REST source on its interval; a failed poll leaves the old quote to age out.
     private func poll(_ source: CompositePriceClient.Exchange) async {
         while !Task.isCancelled {
-            if let quote = await CompositePriceClient.fetchQuote(source, session: session) {
+            // A poll that finishes after `stop()` mustn't bring its quote back.
+            if let quote = await CompositePriceClient.fetchQuote(source, session: session), !Task.isCancelled {
                 messageCounts[source.rawValue, default: 0] += 1
                 let previous = quotes[source.rawValue]
                 if previous?.bid != quote.bid || previous?.ask != quote.ask {
@@ -139,6 +141,9 @@ actor LivePriceFeed {
     func stop() {
         tasks.values.forEach { $0.cancel() }
         tasks = [:]
+        sockets.values.forEach { $0.cancel(with: .goingAway, reason: nil) }
+        sockets = [:]
+        connectionIDs = [:]
         quotes = [:]
         stateSince = [:]
     }
@@ -260,17 +265,25 @@ actor LivePriceFeed {
     // MARK: Connection
 
     /// Keeps one exchange connected, reconnecting with backoff (1s, 2s, 4s… up to 30s).
+    /// The backoff resets only once a connection delivers a quote or stays up 30s, so a
+    /// book that accepts and then drops at once isn't redialled every second.
     /// A watchdog also replaces a socket that stays open but goes silent, which would
     /// otherwise leave the source stale indefinitely.
     private func run(_ exchange: Exchange) async {
+        let id = exchange.rawValue
         var backoff: Double = 1
         var connections = 0
         while !Task.isCancelled {
             let socket = session.webSocketTask(with: exchange.url)
+            nextConnectionID += 1
+            let connection = nextConnectionID
+            connectionIDs[id] = connection
+            sockets[id] = socket
             socket.resume()
+            let connectedAt = Date.now
             connections += 1
-            if connections > 1 { reconnects[exchange.rawValue, default: 0] += 1 }
-            lastMessage[exchange.rawValue] = .now
+            if connections > 1 { reconnects[id, default: 0] += 1 }
+            lastMessage[id] = .now
             let watchdog = Task { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(5))
@@ -282,26 +295,40 @@ actor LivePriceFeed {
                     }
                 }
             }
+            var quoted = false
             do {
-                if let subscription = exchange.subscription {
-                    try await socket.send(.string(subscription))
-                }
-                backoff = 1
-                while !Task.isCancelled {
-                    let message = try await socket.receive()
-                    let text: String? = switch message {
-                    case .string(let string): string
-                    case .data(let data): String(data: data, encoding: .utf8)
-                    @unknown default: nil
+                // `receive()` doesn't respond to cancellation; closing the socket ends it.
+                try await withTaskCancellationHandler {
+                    if let subscription = exchange.subscription {
+                        try await socket.send(.string(subscription))
                     }
-                    if let text { handle(text, from: exchange) }
+                    while !Task.isCancelled {
+                        let message = try await socket.receive()
+                        let text: String? = switch message {
+                        case .string(let string): string
+                        case .data(let data): String(data: data, encoding: .utf8)
+                        @unknown default: nil
+                        }
+                        if let text, handle(text, from: exchange, connection: connection), !quoted {
+                            quoted = true
+                            backoff = 1
+                        }
+                    }
+                } onCancel: {
+                    socket.cancel(with: .goingAway, reason: nil)
                 }
             } catch {
-                // Dropped, refused or silenced by the watchdog; fall through to reconnect.
+                // Dropped, refused, silenced by the watchdog or stopped; fall through.
             }
             watchdog.cancel()
             socket.cancel(with: .goingAway, reason: nil)
-            quotes[exchange.rawValue] = nil
+            // Only this connection's own quote is cleared, never a newer connection's.
+            if connectionIDs[id] == connection {
+                connectionIDs[id] = nil
+                sockets[id] = nil
+                quotes[id] = nil
+            }
+            if Date.now.timeIntervalSince(connectedAt) >= 30 { backoff = 1 }
             try? await Task.sleep(for: .seconds(backoff))
             backoff = min(backoff * 2, 30)
         }
@@ -311,29 +338,32 @@ actor LivePriceFeed {
         lastMessage[exchange.rawValue].map { date.timeIntervalSince($0) > Self.silentLimit } ?? false
     }
 
-    private func handle(_ text: String, from exchange: Exchange) {
+    /// Applies one stream message; `true` if it carried a quote. Ignored unless `connection`
+    /// still owns the exchange's quote.
+    private func handle(_ text: String, from exchange: Exchange, connection: Int) -> Bool {
+        guard connectionIDs[exchange.rawValue] == connection else { return false }
         messageCounts[exchange.rawValue, default: 0] += 1
         lastMessage[exchange.rawValue] = .now
         guard let data = text.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
         let now = Date.now
         var quote = quotes[exchange.rawValue] ?? Quote(updated: now)
 
         switch exchange {
         case .coinbase:
-            guard json["type"] as? String == "ticker" else { return }
+            guard json["type"] as? String == "ticker" else { return false }
             quote.bid = number(json["best_bid"])
             quote.ask = number(json["best_ask"])
 
         case .kraken:
             guard json["channel"] as? String == "ticker",
-                  let entry = (json["data"] as? [[String: Any]])?.first else { return }
+                  let entry = (json["data"] as? [[String: Any]])?.first else { return false }
             quote.bid = number(entry["bid"])
             quote.ask = number(entry["ask"])
 
         case .bitstamp:
             guard json["event"] as? String == "data", let book = json["data"] as? [String: Any],
-                  let bids = book["bids"] as? [[Any]], let asks = book["asks"] as? [[Any]] else { return }
+                  let bids = book["bids"] as? [[Any]], let asks = book["asks"] as? [[Any]] else { return false }
             quote.bid = number(bids.first?.first)
             quote.ask = number(asks.first?.first)
 
@@ -343,6 +373,7 @@ actor LivePriceFeed {
             updateCounts[exchange.rawValue, default: 0] += 1
         }
         quotes[exchange.rawValue] = quote
+        return quote.bid != nil && quote.ask != nil
     }
 
     /// Per-exchange (messages, quote changes, current mid), for diagnostics.

@@ -48,7 +48,7 @@ nonisolated struct PerformanceBreakdown: Sendable {
         let marketCorrect: Int
         /// Mean Brier edge (fraction; ×100 for points). Positive = bot better.
         let edge: Double
-        /// 95% margin of error on `edge`.
+        /// 95% margin of error on `edge` (t-based for small samples; infinite with one window).
         let edgeMargin: Double
         /// Windows that settled Up.
         var settledUp = 0
@@ -56,20 +56,26 @@ nonisolated struct PerformanceBreakdown: Sendable {
         var meanConfidence = 0.5
         /// Windows where the bot and Kalshi's favorite picked different sides.
         var disagreements = 0
+        /// Windows whose edge wasn't exactly even (the bot didn't just quote Kalshi's price).
+        var unevenWindows = 0
 
         var botAccuracy: Double { windows > 0 ? Double(botCorrect) / Double(windows) : 0 }
         var marketAccuracy: Double { windows > 0 ? Double(marketCorrect) / Double(windows) : 0 }
 
-        /// Gaps under this (0.05 Brier points) are treated as a tie.
+        /// Gaps under this (0.05 Brier points) are treated as a tie in the trends.
         static let evenBelow = 0.0005
 
+        /// Follows the Brier edge shown beside it — the same measure the tint, ranking and
+        /// significance use. An edge that rounds to 0.00 points is even.
         var verdict: Verdict {
-            if botCorrect != marketCorrect { return botCorrect > marketCorrect ? .ahead : .behind }
-            if abs(edge) < Self.evenBelow { return .even }
-            return edge > 0 ? .ahead : .behind
+            let shown = PerformanceBreakdown.hundredthsOfPoints(edge)
+            return shown > 0 ? .ahead : (shown < 0 ? .behind : .even)
         }
-        /// The difference is larger than its margin of error, on enough windows to judge.
-        var isSignificant: Bool { windows >= 10 && abs(edge) > edgeMargin }
+        /// The difference is larger than its margin of error, on enough windows that differed
+        /// to judge.
+        var isSignificant: Bool {
+            unevenWindows >= AccuracyStats.minimumPairedDifferences && abs(edge) > edgeMargin
+        }
     }
 
     /// One day of the week with its time blocks, for ranking when to trade.
@@ -197,15 +203,15 @@ nonisolated struct PerformanceBreakdown: Sendable {
     static func period(_ windows: [Window], id: String, label: String) -> Period {
         let edges = windows.map(\.edge)
         let n = Double(edges.count)
-        let mean = n > 0 ? edges.reduce(0, +) / n : 0
-        let variance = n > 1 ? edges.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / (n - 1) : 0
+        let (mean, margin) = n > 0 ? AccuracyStats.meanAndMargin(edges) : (0, .infinity)
         return Period(id: id, label: label, windows: windows.count,
                       botCorrect: windows.filter(\.botCorrect).count,
                       marketCorrect: windows.filter(\.marketCorrect).count,
-                      edge: mean, edgeMargin: n > 1 ? 1.96 * (variance / n).squareRoot() : .infinity,
+                      edge: mean, edgeMargin: margin,
                       settledUp: windows.filter(\.actualUp).count,
                       meanConfidence: n > 0 ? windows.map { max($0.probabilityUp, 1 - $0.probabilityUp) }.reduce(0, +) / n : 0.5,
-                      disagreements: windows.filter { ($0.probabilityUp >= 0.5) != ($0.marketYesMid >= 0.5) }.count)
+                      disagreements: windows.filter { ($0.probabilityUp >= 0.5) != ($0.marketYesMid >= 0.5) }.count,
+                      unevenWindows: edges.count { $0 != 0 })
     }
 
     /// Ranks weekdays by the bot's edge over Kalshi, then the four-hour blocks within each.
@@ -246,14 +252,22 @@ nonisolated struct PerformanceBreakdown: Sendable {
         return "\(h) \(hour < 12 ? "AM" : "PM")"
     }
 
+    /// An edge in points, signed, e.g. "+0.12"; one that rounds to 0.00 shows unsigned.
     static func points(_ edge: Double) -> String {
-        let value = edge * 100
-        return "\(value >= 0 ? "+" : "−")\(magnitude(edge))"
+        let shown = hundredthsOfPoints(edge)
+        return shown == 0 ? magnitude(edge) : "\(shown > 0 ? "+" : "−")\(magnitude(edge))"
     }
 
     /// Size of an edge in points, without a sign.
     static func magnitude(_ edge: Double) -> String {
-        abs(edge * 100).formatted(.number.precision(.fractionLength(2)))
+        (abs(hundredthsOfPoints(edge)) / 100).formatted(.number.precision(.fractionLength(2)))
+    }
+
+    /// An edge as displayed: rounded to hundredths of a point (e.g. 0.0012 → 12), so the
+    /// sign and verdict are taken from the figure shown, never from what rounds away.
+    static func hundredthsOfPoints(_ edge: Double) -> Double {
+        let rounded = (edge * 10_000).rounded()
+        return rounded == 0 ? 0 : rounded  // no −0
     }
 
     // MARK: Trends
@@ -272,7 +286,7 @@ nonisolated struct PerformanceBreakdown: Sendable {
             trends.append(Trend(
                 kind: abs(change) < Period.evenBelow ? .neutral : (change > 0 ? .favorable : .unfavorable),
                 title: "Last \(recentCount) windows: \(points(recent.edge)) vs. \(points(earlier.edge)) before",
-                detail: "Brier edge over Kalshi per window, in points (positive = the bot was closer). The bot was right on \(recent.botCorrect) of \(recent.windows) recent calls; Kalshi's favorite on \(recent.marketCorrect). \(change > 0 ? "Improving" : "Slipping") by \(magnitude(change)) — \(abs(change) > margin ? "larger than" : "within") the ±\(magnitude(margin)) noise.",
+                detail: "Brier edge over Kalshi per window, in points (positive = the bot was closer). The bot was right on \(recent.botCorrect) of \(recent.windows) recent calls; Kalshi's favorite on \(recent.marketCorrect). \(hundredthsOfPoints(change) == 0 ? "Unchanged" : "\(change > 0 ? "Improving" : "Slipping") by \(magnitude(change))") — \(abs(change) > margin ? "larger than" : "within") the ±\(magnitude(margin)) noise.",
                 isConfirmed: abs(change) > margin))
         }
 

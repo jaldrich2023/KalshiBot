@@ -5,6 +5,76 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.27.1] — 2026-11-05 · Build 49
+
+A full bug review; every issue it found is fixed.
+
+### Fixed — data and the model
+- **Changing the call time no longer deletes live training examples.** Live examples
+  (the only ones with tick momentum) are never replaced by rebuilt history; they wait
+  until their call time is selected again.
+- **Resetting while settlements are being checked can't crash** by writing to deleted
+  records, and settlement checks stop with the bot and on reset.
+- **A retrain still running can't undo a reset** (or a call-time or Use Kalshi odds
+  change): stale results are thrown away and the model is refitted.
+- **Erase Everything can't be undone by work still in flight**, and the app quits only
+  once its relaunch has started (otherwise it says to reopen it).
+- **Calls lock on time.** The time is re-checked after fetching fresh candles (which now
+  wait at most 5 seconds and only when stale), the odds are re-read, and the call is
+  stored under the configured call time.
+- A delayed backup price can't arrive out of order or overwrite a newer one.
+- Windows that never settle Yes or No are marked void after 24 hours instead of being
+  checked forever.
+- Promotion trials track "fresh windows" by time, so a window is never judged twice.
+- Window rollover can't briefly bring back the window that just closed, and the repeated
+  hour when clocks fall back no longer loops on an already-closed window.
+
+### Fixed — prices, odds and advice
+- **Kalshi's fee is charged once per order**, as Kalshi does, not rounded up per contract:
+  position costs and profits were overstated (100 contracts at 10¢: $0.63, not $1.00).
+- An empty side of Kalshi's order book now means "no quote", not a stale 11-second-old one.
+- Reversal Risk compares its Kalshi blend on the same windows, measures live volatility
+  over unbroken minutes only, and feeds its calibration the same inputs it was fitted on.
+- Kalshi page cursors are URL-encoded and can't loop; a malformed history candle is
+  skipped instead of failing its batch; the backup price never uses cached quotes.
+- Price streams close promptly when stopped, an old connection can't clear a new one's
+  quote, and an exchange that keeps dropping the connection is retried with back-off.
+- The 60-second average can't be drawn from a short span after a feed gap.
+
+### Fixed — statistics and the dashboard
+- **"Edge vs. Kalshi" uses an exact test** on the windows where the bot and Kalshi
+  disagreed, so a handful of windows can no longer read "more than chance". Brier
+  significance needs at least 10 differing windows and uses t critical values.
+- Accuracy's margin is a Wilson interval (no ±0 at 100%, never past 100%); one window no
+  longer shows "±∞".
+- The Performance verdict follows the Brier edge shown beside it.
+- Values that round to zero show as even, not "-$0.00" or "Slipping by 0.00".
+- **The dashboard no longer re-lays itself out several times per frame** (the
+  "onChange(of: CGFloat)" console warning), and its cards keep their width with no market.
+- Faster: accuracy isn't recomputed on every price tick, the Performance tab isn't
+  rebuilt on hover, the charts redraw only when the hovered second changes, and the
+  indicator cards' sizing text is cached.
+- A popover tip can no longer stay stuck open, and the 60-second chart's close range has
+  no duplicate points.
+
+### Fixed — reports, crashes and updates
+- **The crash handler prepares everything in advance**, so a crash can't hang the app
+  instead of being recorded; it records the crashing instruction, drops its own frames
+  at crash time, handles two crashing threads, and names frames correctly in release
+  (stripped) and debug builds, so reports group properly.
+- The scrubber no longer mangles words containing a short user name or Swift signatures
+  containing "token"; a log with one bad character is still attached.
+- Reports refused as invalid (any 4xx except timeouts and rate limits) are dropped instead
+  of retried forever, reports older than 30 days are dropped, and automatic reports
+  waiting when you turn reporting off aren't sent (ones you chose to send still are).
+- The Report a Problem form can't send twice, and Retry Now resends exactly your report.
+- **Check for Updates… shows a newer release even if you dismissed its notice**, instead of
+  "up to date", and old results no longer pop up later.
+- **Running the unit tests no longer quits a running copy of the bot**; crash capture
+  starts before the data store opens, and another copy is given time to quit first.
+- Reopening the window no longer restarts a bot you stopped; crash files are collected
+  before any network step; closing the window doesn't cancel sending.
+
 ## [2.27.0] — 2026-11-03 · Build 48
 
 ### Added
