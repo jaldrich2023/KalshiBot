@@ -64,7 +64,7 @@ Each KXBTC15M market covers one 15-minute window, for example 5:00–5:15 PM Eas
 - **Yes** pays $1 if it settles at or above the target ("Up"). **No** pays $1 if it settles below ("Down").
 - A contract's price, between 1¢ and 99¢, is the market's probability. Yes at 62¢ means the market gives Up about a 62% chance.
 
-Kalshi charges a taker fee on each trade, rounded up to the next cent: 7% × price × (1 − price) per contract. Kalshi Bot includes this fee, and half the bid/ask spread, in every edge and profit figure it shows.
+Kalshi charges a taker fee on each order, rounded up to the next cent: 7% × contracts × price × (1 − price). Kalshi Bot includes this fee, and half the bid/ask spread, in every edge and profit figure it shows: per contract for the edges, and once per order for your position's cost and profit.
 
 Because both the target and the settlement are 60-second averages, the last minute matters a lot. Once the settlement minute starts, every second that passes locks in part of the answer. Kalshi Bot's odds take that into account.
 
@@ -95,10 +95,11 @@ Before the call time, the card says "No prediction locked for this window" and s
 
 The scorecard for every settled call:
 
-- **Accuracy**, with how many were correct and a 95% margin of error.
+- **Accuracy**, with how many were correct and its 95% range (a Wilson interval, which stays between 0% and 100% and is never ±0).
 - **Expected correct:** how many the bot's own probabilities said should be right, with a 95% range. If the actual number is inside the range, the difference is ordinary luck.
 - **Brier score:** the average squared error of the probabilities. Lower is better; 0.25 is a coin flip.
-- **Kalshi favorite accuracy, Kalshi Brier score, Edge vs. Kalshi:** the same measures for Kalshi's own price on the same windows, and the difference with its margin of error.
+- **Kalshi favorite accuracy, Kalshi Brier score:** the same measures for Kalshi's own price, on the windows that had a Kalshi price at the call.
+- **Edge vs. Kalshi:** the bot's accuracy minus Kalshi's on the same windows. Only windows where the two called different sides can differ, so it's judged with an exact test on those: "more than chance" needs at least 6 such windows all won by the same side, or more when they're split.
 - **When ≥65% confident:** accuracy on the more confident calls, for the bot and for Kalshi.
 - **Streaks:** the current streak, the longest win streak and the longest losing streak.
 - **By confidence:** accuracy in each confidence band. Well-calibrated calls are right about as often as their confidence says. For example, 55–60% calls should lose about 4 times in 10.
@@ -253,7 +254,7 @@ The **Performance** tab compares the bot with Kalshi's price over time. All time
 - **Emerging trends:** patterns forming in recent results, such as calls beating their confidence. Each is marked as an early sign or as confirmed.
 - **Cumulative edge over Kalshi:** the running total of the per-window edge. Rising means the bot is pulling ahead, falling means it's falling behind, and flat means it's matching Kalshi.
 - **Hour by hour and Day × hour:** the edge for each hour of the day, and for each hour on each day.
-- **Day by day, Week by week, Month by month:** tables of every period, with **beyond noise** shown when the difference is bigger than its margin of error.
+- **Day by day, Week by week, Month by month:** tables of every period, with **beyond noise** shown when the Brier difference is bigger than its margin of error and at least 10 windows in the period differ. Each period's verdict (beat, trailed or even with Kalshi) follows the same Brier edge.
 
 ### Hover for details
 
@@ -331,6 +332,10 @@ The saved market download (`MarketHistory.v1.json`) lives in the app's Caches fo
 **Fewer than 10 sources are live.** A source is dropped when its feed goes stale or its price is more than 0.05% away from the others; the list shows how long it's been out. The composite needs only a few sources. Dropped streams reconnect on their own, and a stream that goes silent for 30 seconds is replaced automatically.
 
 **The Model card says learned adjustments haven't beaten Kalshi's odds.** That's the normal state. The bot anchors on Kalshi's well-calibrated price and adds a signal only once it proves itself on windows it wasn't trained on.
+
+**A window shows no call although the bot was running.** If fetching fresh data delayed the call past the allowed time, the window is skipped rather than called late; the Activity tab says so. Windows Kalshi never settles are marked void, and in the repeated hour when clocks fall back a window with no matching Kalshi market is skipped. See [Known issues](KNOWN_ISSUES.md).
+
+**Edge vs. Kalshi says "not yet distinguishable from chance".** That's normal: the bot follows Kalshi's odds, so they rarely disagree, and only disagreements can show an edge.
 
 **The charts say "Collecting 60s of prices…".** The 60-second average needs a minute of prices after launch or after a gap in the feeds.
 
