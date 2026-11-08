@@ -2,7 +2,7 @@
 
 Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.
 
-Version 2.27.1 · macOS 27.2 or later · © 2026 I'm The Team, LLC
+Version 2.28.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC
 
 ![The dashboard during a live window](images/01-dashboard.jpg)
 
@@ -88,6 +88,8 @@ Before the call time, the card says "No prediction locked for this window" and s
 
 - **The call:** a large **UP** or **DOWN**, with P(up) and the confidence (the probability of the side called).
 - **Calls like this:** how often past calls in the same 5-point confidence band, at the same call minute, were right. For example: "Calls like this (70–75% at +3 min) won 77% of 1,448 past windows."
+- **WAITING** (with **Wait** on): the call hasn't locked yet. It locks the first moment, up to +12, that the bot reaches the confidence set under **Wait**, and the card then shows when it locked. If it never does, the card says **NO CALL**.
+- **Close call** (orange, only when it applies): the price was within 0.5σ of the target when the call locked (σ is the price movement still expected before the close), or already on the other side. In 6,467 past windows, calls that close lost 40% of the time (48% when already on the other side), against about 20% for the rest. Raising **Calls** to 60–70% skips most of them.
 - **Live:** Kalshi's Yes and No prices right now, as percentages, with the buy and sell prices in cents.
 - **Bot now:** what the model would say from the current price. This is for information only; the locked call doesn't change.
 
@@ -141,6 +143,7 @@ The same window as 1-minute candles, with its own **Layers** menu. The **Candle 
 - **Currently, Cushion:** how far the price is from the target, and that distance in units of expected movement (σ).
 - **Momentum strength:** how strongly the price has moved over the last 3 minutes compared with normal, and whether it's moving with or against the side that's winning.
 - **Breaks above window high, Breaks below window low:** the chance of a new high or low before the close.
+- **Final minutes, close to the target:** in the last three minutes, while the cushion is under 0.5σ, this replaces the ordinary close-to-target note. 21% of past losing calls turned in the last two minutes, and calls this close at +12 lost 42%.
 
 - **Live check:** every minute the card's figure is logged, and scored once the window settles. For each band (under 15%, 15–35%, 35% or more) the card shows what it said on average and how often the leading side actually lost. Close agreement means the card is well calibrated; small counts are noisy.
 
@@ -182,9 +185,10 @@ Underneath, the card shows the bot's fair value, Kalshi's Yes bid and ask, and t
 
 | Setting | Choices | What it does |
 | --- | --- | --- |
-| Preset | Standard (+3 min, ≥60%) or High hit rate (+9 min, ≥70%) | Sets **Call at** and **Calls** together. High hit rate was right 88% of the time in 6,459 past windows (Standard: 73%) and calls about 71% of windows. It raises accuracy, not profit: those contracts cost correspondingly more. Changing either setting by hand shows **Custom**. |
+| Preset | Standard (+3 min, ≥60%) or High hit rate (wait for 80%) | Sets **Call at**, **Calls** and **Wait** together. High hit rate waits from +3 until a call is 80% confident: in a backtest on 1,941 recent windows it was right 84% of the time and called 87% of windows (Standard's calls: 73%). It raises accuracy, not profit: those contracts cost correspondingly more. |
 | Call at | +3 to +12 min | When each window's call locks. The menu shows how often calls at that minute were right in history. Later calls are right more often, but Kalshi's price has moved too. Changing it rebuilds the model's history at the new time. |
 | Calls | All calls, or only ≥60% (the default), 65%, 70%, 75% or 80% confident | Calls below the threshold are marked **No call** and left out of accuracy and performance. Every window is still logged and trained on. |
+| Wait | Off (the default), or until 75%, 80%, 85% or 90% confident | With Wait on, the call doesn't lock at **Call at**: it waits, up to +12, until the bot is at least that confident — once the reversal risk of the side ahead is at most 100% minus that — and locks then. If it never gets there, the window is a **No call**. While it waits, the Prediction card says **WAITING** with the confidence now. In a backtest on 1,941 recent windows: 75% → right 80.5% on 93% of windows (average call at +6); 80% → 84.3% on 87% (+7); 85% → 89.0% on 77% (+8); 90% → 93.6% on 65% (+9). Calling every window at +3 was right 65.6%. The model still learns from every window at **Call at**, so changing Wait rebuilds nothing. |
 | Stop-loss | Style default, or Custom: 5%–70% | The share of the price paid that you're willing to lose before exiting. |
 | Take profit | Style default, or Custom: 5%–100% | The gain on the price paid at which to sell. If the gain isn't possible at the current price, the card says it's unreachable and no line is drawn. |
 | Use Kalshi odds | On or off | When on, the model starts from Kalshi's price and adjusts it only with signals that have proven themselves. **Leave this on.** With it off, the model uses price signals alone, which is much less accurate and can disagree with the market for no good reason; the card shows a warning while it's off. |
@@ -210,6 +214,8 @@ Both lines are drawn on the 60-second average chart, in Bitcoin prices, so you c
 ### Entry and exit alerts
 
 The **Entry & exit alerts** list shows each suggestion as it happens, with the time and the reason. For example: "If holding Yes: exit at 14¢. From the current price, Yes now loses 86% of the time…". Alerts that no longer apply are marked **No longer active**.
+
+**What exits are for.** Exits limit how much a window can lose; they don't improve the expected result. In a backtest on the newest 1,941 windows, selling the called side whenever its price fell below any level from 45¢ to 10¢ did no better than holding to settlement (−0.17¢ ± 0.56¢ a contract), because Kalshi's price already reflects the risk and selling pays a second fee. The card says so above the alerts.
 
 ## 5. Indicators
 

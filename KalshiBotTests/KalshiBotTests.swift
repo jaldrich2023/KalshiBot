@@ -1526,8 +1526,10 @@ struct CallsLikeThisTests {
     }
 
     @Test func presetsSetCallTimeAndThreshold() {
-        #expect(BotEngine.CallPreset.highHitRate.minutes == 9 && BotEngine.CallPreset.highHitRate.confidence == 0.70)
-        #expect(BotEngine.CallPreset.standard.minutes == 3 && BotEngine.CallPreset.standard.confidence == 0.60)
+        // High hit rate now waits from +3 for an 80% call instead of calling at +9.
+        #expect(BotEngine.CallPreset.highHitRate.minutes == 3 && BotEngine.CallPreset.highHitRate.wait == 0.80)
+        #expect(BotEngine.CallPreset.standard.minutes == 3 && BotEngine.CallPreset.standard.confidence == 0.60
+                && BotEngine.CallPreset.standard.wait == 0)
     }
 }
 

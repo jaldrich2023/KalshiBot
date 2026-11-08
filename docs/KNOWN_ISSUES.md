@@ -1,6 +1,6 @@
 # Known issues and limitations
 
-These are known, documented limitations of Kalshi Bot 2.27.1. They aren't treated as bugs. Issues fixed recently are listed at the end.
+These are known, documented limitations of Kalshi Bot 2.28.0. They aren't treated as bugs. Issues fixed recently are listed at the end.
 
 ## Predictions
 
@@ -21,6 +21,8 @@ These are known, documented limitations of Kalshi Bot 2.27.1. They aren't treate
 
 ## Calls and settlement
 
+- **Waiting raises accuracy, not profit.** With **Wait** on, calls lock later and only once confident, so they're right far more often, but those contracts cost correspondingly more on Kalshi, and some windows get no call at all. Calls that waited also lock at different minutes, so they aren't comparable minute for minute with calls made without waiting.
+- **Close calls reverse often, and can't be told apart in advance.** A call locked within 0.5σ of the target loses about 40% of the time; the Prediction card flags it. Nothing tested (distance, target crosses, momentum, Kalshi's drop since the call) warned of a reversal better than Kalshi's live price, which the Reversal Risk card already uses.
 - **A call that can't lock on time is skipped.** If fetching fresh data delays the call past the allowed time, the window gets no call rather than a late one, and the Activity tab says so.
 - **Windows that never settle are marked void.** If Kalshi reports no Yes or No result (for example a voided market), or none within 24 hours of the close, the window is marked void and left out of accuracy and training.
 - **The repeated hour when clocks fall back.** On the first Sunday of November, 1:00–2:00 AM Eastern happens twice. If Kalshi has no market matching a window's exact close in that hour, the bot skips that window instead of reusing the earlier one.
@@ -29,6 +31,7 @@ These are known, documented limitations of Kalshi Bot 2.27.1. They aren't treate
 
 - **Kalshi Bot never places orders.** Every trade is yours to make on Kalshi.
 - **Estimates use the top of the book.** Profit and loss figures assume you trade at the best bid or ask, with Kalshi's taker fee charged once per order as Kalshi does. Large stakes can move the price. When one side of Kalshi's book is empty, there's no quote for it, and no estimate or advice that needs it.
+- **Exits don't add profit.** Exit alerts and the stop-loss line cap a window's loss, but in a backtest they never improved the expected result over holding, once fees were paid. Use them to limit losses.
 - **Stop-loss and take-profit lines are estimates.** They convert a contract price into a Bitcoin price using the bot's odds, plus the current gap between those odds and Kalshi's price. Kalshi's actual price at that level can differ.
 
 ## App

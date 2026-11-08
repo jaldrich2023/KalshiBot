@@ -118,6 +118,27 @@ nonisolated struct ReversalRisk: Sendable, Equatable {
         var calibration: RiskCalibration?
     }
 
+    /// How close the locked call was to its target, and how often calls like it reversed.
+    struct CloseCall: Sendable, Equatable {
+        /// Cushion on the called side in σ of the movement still to come (negative: the
+        /// price was already on the other side of the target).
+        let cushionSigma: Double
+        /// Share of past calls like it that lost.
+        let pastLossRate: Double
+        var onWrongSide: Bool { cushionSigma < 0 }
+    }
+
+    /// The call is "close" if, when it locked, the price was within 0.5σ of the target on
+    /// the called side, or already past it. Nil for calls with a comfortable cushion.
+    static func closeCall(spot: Double, strike: Double, calledUp: Bool, volatility: Double,
+                          secondsRemaining: TimeInterval) -> CloseCall? {
+        guard volatility > 0, secondsRemaining > 0 else { return nil }
+        let sigma = (spot - strike) * (calledUp ? 1 : -1) / (volatility * secondsRemaining.squareRoot())
+        guard sigma < ReversalHistory.closeSigma else { return nil }
+        return CloseCall(cushionSigma: sigma,
+                         pastLossRate: sigma < 0 ? ReversalHistory.wrongSideAtCallLost : ReversalHistory.closeAtCallLost)
+    }
+
     static func assess(_ input: Inputs) -> ReversalRisk {
         let odds = SettlementOdds.estimate(price: input.price, strike: input.strike,
                                            secondsRemaining: input.secondsRemaining, volatility: input.volatility,
@@ -157,11 +178,19 @@ nonisolated struct ReversalRisk: Sendable, Equatable {
                 detail: "Under 2 minutes to close with a solid cushion.",
                 raisesRisk: false))
         }
-        if odds.cushionSigma < 0.5 {
-            factors.append(Factor(
-                title: "Close to the target",
-                detail: "The cushion is under half of the price movement still expected before the close.",
-                raisesRisk: true))
+        if odds.cushionSigma < ReversalHistory.closeSigma {
+            if input.secondsRemaining <= ReversalHistory.finalStretch {
+                // Late and close: many reversals come in the last couple of minutes.
+                factors.append(Factor(
+                    title: "Final minutes, close to the target",
+                    detail: "\(ReversalHistory.percent(ReversalHistory.lateShare)) of past losing calls turned in the last two minutes, and calls this close at +12 lost \(ReversalHistory.percent(ReversalHistory.closeAtTwelveLost)).",
+                    raisesRisk: true))
+            } else {
+                factors.append(Factor(
+                    title: "Close to the target",
+                    detail: "The cushion is under half of the price movement still expected before the close.",
+                    raisesRisk: true))
+            }
         }
 
         let momentum = input.priceEarlier.map { earlier -> Momentum in
@@ -280,4 +309,29 @@ nonisolated enum Calibration {
         let q = min(max(p, 1e-6), 1 - 1e-6)
         return 1 / (1 + exp(-(a + b * log(q / (1 - q)))))
     }
+}
+
+/// What past windows showed about reversals (a backtest of 6,467 windows, Aug 28 – Nov 4,
+/// 2026, with each window's minute-by-minute prices and Kalshi's odds; see
+/// KalshiBotTests/ReversalResearchProbe.swift). Shown to the user as context.
+nonisolated enum ReversalHistory {
+    /// Under this many σ of the movement still to come, a call counts as close.
+    static let closeSigma = 0.5
+    /// Calls within 0.5σ of the target at +3 that lost.
+    static let closeAtCallLost = 0.40
+    /// Calls locked with the price already on the other side of the target that lost.
+    static let wrongSideAtCallLost = 0.48
+    /// Calls within 0.5σ of the target at +12 that lost.
+    static let closeAtTwelveLost = 0.42
+    /// Share of losing calls whose last moment on the called side was +13 or +14.
+    static let lateShare = 0.21
+    /// The final stretch the late warning covers: the last three minutes (from +12).
+    static let finalStretch: TimeInterval = 180
+    /// Selling the called side when its price fell (below 10–45¢), on the newest 1,941
+    /// windows, against holding to settlement: never better after fees and spread.
+    static let exitWindows = 1_941
+    static let exitVersusHoldCents = -0.17
+    static let exitVersusHoldMarginCents = 0.56
+
+    static func percent(_ x: Double) -> String { "\(Int((x * 100).rounded()))%" }
 }

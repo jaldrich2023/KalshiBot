@@ -5,6 +5,35 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.28.0] — 2026-11-08 · Build 50
+
+### Added
+- **Wait until confident** (Strategy card › Wait: off, or 75%, 80%, 85% or 90%). Instead
+  of locking at the call time, the call waits — up to +12 — until the bot is at least that
+  confident (reversal risk of the side ahead at most 100% minus that) and locks then; if
+  it never gets there, the window is a No call. In a backtest on 1,941 recent windows,
+  waiting for 80% was right 84.3% of the time on 87% of windows (average call at +7),
+  against 65.6% for every call at +3 and 74.8% for every call at +7. The Prediction card
+  shows WAITING with the confidence now, then when the call locked; the log shows
+  Waiting. The model still learns from every window at the call time, so changing Wait
+  rebuilds nothing. Raises accuracy, not profit: confident contracts cost more.
+- **The High hit rate preset now waits for 80%** from +3, instead of calling at +9 with
+  a 70% threshold (84% right on 87% of windows, against 88% on 71%).
+- **Close-call flag on the Prediction card.** When the call locked within 0.5σ of the
+  target (σ: the price movement still expected before the close), or with the price
+  already on the other side, the card says so and how often calls like it reversed in
+  6,467 past windows: 40% (48% from the other side), against about 20% for the rest.
+- **Final-minutes warning on the Reversal Risk card.** In the last three minutes, while
+  the cushion is under 0.5σ: 21% of past losing calls turned in the last two minutes,
+  and calls this close at +12 lost 42%.
+
+### Changed
+- **The Entry & exit alerts say what exits are for:** they limit a window's loss but
+  don't add expected profit. Selling the called side when its price fell (below any level
+  from 45¢ to 10¢) was never better than holding on the newest 1,941 windows, after fees.
+- Two research tests (disabled by default) hold the accuracy and reversal backtests
+  these figures come from: `AccuracyResearchProbe` and `ReversalResearchProbe`.
+
 ## [2.27.1] — 2026-11-05 · Build 49
 
 A full bug review; every issue it found is fixed.

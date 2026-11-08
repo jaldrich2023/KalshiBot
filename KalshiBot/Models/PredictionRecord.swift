@@ -87,6 +87,32 @@ final class PredictionRecord {
     /// Confidence in the predicted side, 0.5…1.
     var confidence: Double { max(probabilityUp, 1 - probabilityUp) }
 
+    // Wait until confident (2.28)
+    /// The confidence the call waited for (0 = it locked at the call time, as before 2.28).
+    var waitLevel: Double = 0
+    /// When a waiting call locked. Nil while it's still waiting — or, once the deadline
+    /// has passed, because it never reached `waitLevel` (a No call).
+    var lockedAt: Date?
+
+    /// The call is waiting to reach its confidence level (or never did).
+    var isAwaitingCall: Bool { waitLevel > 0 && lockedAt == nil }
+
+    /// Locks a waiting call with the model's view now. The features from the call time
+    /// stay as they were: they're the window's training example, made at the same moment
+    /// for every window.
+    func lockCall(at time: Date, probabilityUp: Double, spot: Double, yesMid: Double?, yesBid: Double?, yesAsk: Double?,
+                  contributions: [FeatureKey: Double]) {
+        self.probabilityUp = probabilityUp
+        predictedUp = probabilityUp >= 0.5
+        predictedAt = time
+        spotAtPrediction = spot
+        marketYesMid = yesMid
+        marketYesBid = yesBid
+        marketYesAsk = yesAsk
+        contributionsData = Self.encode(contributions)
+        lockedAt = time
+    }
+
     var features: [FeatureKey: Double] { Self.decode(featuresData) }
     var contributions: [FeatureKey: Double] { Self.decode(contributionsData) }
     var excluded: Set<FeatureKey> { Set(excludedFeatures.compactMap(FeatureKey.init(rawValue:))) }

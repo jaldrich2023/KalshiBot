@@ -112,28 +112,56 @@ final class BotEngine {
 
     var callDelay: TimeInterval { Double(callDelayMinutes) * 60 }
 
-    /// One-click combinations of call time and confidence threshold.
+    /// One-click combinations of call time, confidence threshold and waiting.
     enum CallPreset: String, CaseIterable, Identifiable {
         case standard, highHitRate
         var id: String { rawValue }
         var title: String {
             switch self {
             case .standard: "Standard (+3 min, ≥60%)"
-            case .highHitRate: "High hit rate (+9 min, ≥70%)"
+            case .highHitRate: "High hit rate (wait for 80%)"
             }
         }
-        var minutes: Int { self == .standard ? 3 : 9 }
-        var confidence: Double { self == .standard ? 0.60 : 0.70 }
+        var minutes: Int { 3 }
+        var confidence: Double { 0.60 }
+        /// High hit rate waits from +3 for an 80% call: 84% right on 87% of windows in a
+        /// backtest, against 73% for Standard's calls.
+        var wait: Double { self == .standard ? 0 : BotEngine.defaultWaitConfidence }
     }
 
     func apply(_ preset: CallPreset) {
         minimumCallConfidence = preset.confidence
+        waitUntilConfidence = preset.wait
         if callDelayMinutes != preset.minutes { callDelayMinutes = preset.minutes }
         log("Preset: \(preset.title)")
     }
 
     var activePreset: CallPreset? {
-        CallPreset.allCases.first { $0.minutes == callDelayMinutes && $0.confidence == minimumCallConfidence }
+        CallPreset.allCases.first {
+            $0.minutes == callDelayMinutes && $0.confidence == minimumCallConfidence && $0.wait == waitUntilConfidence
+        }
+    }
+
+    /// "Wait until confident": 0 = the call locks at the call time. Otherwise it waits,
+    /// from the call time to +12, until the model is at least this confident (reversal
+    /// risk at most 1 − this), and the window is a No call if it never gets there. The
+    /// window's training example is still taken at the call time.
+    var waitUntilConfidence: Double {
+        didSet { UserDefaults.standard.set(waitUntilConfidence, forKey: Keys.waitUntilConfidence) }
+    }
+    static let waitConfidenceOptions: [Double] = [0.75, 0.80, 0.85, 0.90]
+    nonisolated static let defaultWaitConfidence = 0.80
+    /// The latest a waiting call can lock: +12, the last call minute (plus a few seconds'
+    /// grace for the once-a-second check).
+    nonisolated static let waitDeadline: TimeInterval = 12 * 60 + 5
+
+    enum WaitDecision: Equatable { case lock, wait, expired }
+
+    /// What a waiting call does now: lock once it's confident enough, keep waiting until
+    /// the deadline, then give up (a No call).
+    nonisolated static func waitDecision(probabilityUp: Double, level: Double, elapsed: TimeInterval) -> WaitDecision {
+        if elapsed > waitDeadline { return .expired }
+        return max(probabilityUp, 1 - probabilityUp) >= level ? .lock : .wait
     }
 
     /// Calls are skipped if the bot can't make one within 30s of the call time (e.g. it
@@ -154,9 +182,9 @@ final class BotEngine {
     }
 
     /// How past calls at this confidence and call minute did.
-    func callsLikeThis(confidence: Double) -> (band: Int, won: Int, total: Int)? {
+    func callsLikeThis(confidence: Double, minute: Int? = nil) -> (band: Int, won: Int, total: Int)? {
         let band = Self.confidenceBand(confidence)
-        guard let entry = confidenceHistory["\(callDelayMinutes):\(band)"], entry.total >= 20 else { return nil }
+        guard let entry = confidenceHistory["\(minute ?? callDelayMinutes):\(band)"], entry.total >= 20 else { return nil }
         return (band, entry.won, entry.total)
     }
 
@@ -232,7 +260,8 @@ final class BotEngine {
 
     /// True if this window's call falls below the confidence threshold.
     func isNoCall(_ record: PredictionRecord) -> Bool {
-        minimumCallConfidence > 0 && record.confidence < minimumCallConfidence
+        // A waiting call that never reached its level by +12 isn't a call.
+        record.isAwaitingCall || (minimumCallConfidence > 0 && record.confidence < minimumCallConfidence)
     }
 
     /// The records that count as calls under the current threshold.
@@ -263,7 +292,8 @@ final class BotEngine {
 
     /// Profit and loss for the stake on this window's call, from the window's state now.
     func position(for market: KalshiMarket, record: PredictionRecord?) -> PositionEstimate? {
-        guard stake > 0, let record, let plan = exitPlan(for: market, record: record), let mid = market.yesMid else { return nil }
+        guard stake > 0, let record, !record.isAwaitingCall, let plan = exitPlan(for: market, record: record),
+              let mid = market.yesMid else { return nil }
         return PositionEstimate.estimate(stake: stake, plan: plan, chanceRight: record.predictedUp ? mid : 1 - mid)
     }
 
@@ -312,6 +342,8 @@ final class BotEngine {
     private var keepAwake: NSObjectProtocol?
     private var isPredicting = false
     private var lastSkippedTicker: String?
+    /// The last window whose waiting call ran out of time (logged once).
+    private var lastExpiredTicker: String?
     private var retrainRequested = false
     private var lastCalibratedTicker: String?
     /// Bumped by a reset so an in-flight history rebuild discards its results.
@@ -349,6 +381,7 @@ final class BotEngine {
         static let historyCallDelay = "historyCallDelay"
         static let lastResetAt = "lastResetAt"
         static let callDelayMinutes = "callDelayMinutes"
+        static let waitUntilConfidence = "waitUntilConfidence"
         static let callTimeAccuracy = "callTimeAccuracy"
         static let confidenceHistory = "confidenceHistory"
         static let promoted = "promotedFeatures"
@@ -390,6 +423,8 @@ final class BotEngine {
             minimumCallConfidence = Self.callConfidenceOptions.contains(savedConfidence) ? savedConfidence : 0
         }
         keepMacAwake = defaults.object(forKey: Keys.keepMacAwake) as? Bool ?? true
+        let savedWait = defaults.double(forKey: Keys.waitUntilConfidence)
+        waitUntilConfidence = Self.waitConfidenceOptions.contains(savedWait) ? savedWait : 0
         let savedStop = defaults.double(forKey: Keys.customStopLoss)
         customStopLoss = Self.stopLossOptions.contains(savedStop) ? savedStop : 0
         let savedProfit = defaults.double(forKey: Keys.customTakeProfit)
@@ -553,7 +588,7 @@ final class BotEngine {
         let defaults = UserDefaults.standard
         let kept: [String: Any] = [Keys.callDelayMinutes, Keys.useKalshiOdds, Keys.dashboardRequiredHeight, Keys.tradingStyle,
                                    Keys.minimumCallConfidence, Keys.customStopLoss, Keys.customTakeProfit, Keys.stake,
-                                   Keys.keepMacAwake]
+                                   Keys.keepMacAwake, Keys.waitUntilConfidence]
             .reduce(into: [:]) { kept, key in kept[key] = defaults.object(forKey: key) }
         if let domain = Bundle.main.bundleIdentifier { defaults.removePersistentDomain(forName: domain) }
         for (key, value) in kept { defaults.set(value, forKey: key) }
@@ -764,6 +799,7 @@ final class BotEngine {
                 await predictIfNeeded(for: market)
             }
             recomputeLive()
+            if let market = currentMarket { lockWaitingCallIfReady(for: market) }
         } catch {
             log("Kalshi: \(error.localizedDescription)")
         }
@@ -830,7 +866,7 @@ final class BotEngine {
     /// Stop-loss and take-profit levels for this window's locked call, under the current
     /// trading style and market conditions. Nil before the call or without Kalshi quotes.
     func exitPlan(for market: KalshiMarket, record: PredictionRecord?) -> ExitPlan? {
-        guard let record, record.ticker == market.ticker, let spot, let strike = market.floorStrike,
+        guard let record, !record.isAwaitingCall, record.ticker == market.ticker, let spot, let strike = market.floorStrike,
               let volatility = volatilityPerRootSecond, let yesBid = market.yesBid, let yesAsk = market.yesAsk,
               yesAsk >= yesBid else { return nil }
         // Entry: what the called side cost at the call (the ask), else its mid then.
@@ -860,7 +896,8 @@ final class BotEngine {
         guard let context = modelContext else { return nil }
         let ticker = market.ticker
         let descriptor = FetchDescriptor<PredictionRecord>(predicate: #Predicate { $0.ticker == ticker })
-        return (try? context.fetch(descriptor))?.first?.predictedUp
+        guard let record = (try? context.fetch(descriptor))?.first, !record.isAwaitingCall else { return nil }
+        return record.predictedUp
     }
 
     /// Calibrated P(up) from the current price — the same odds as the Reversal Risk card.
@@ -964,9 +1001,43 @@ final class BotEngine {
             excludedFeatures: excluded,
             callDelay: callDelay
         )
+        let level = waitUntilConfidence
+        if level > 0 {
+            record.waitLevel = level
+            // Confident enough already: the call locks now, as it would without waiting.
+            if Self.waitDecision(probabilityUp: probability, level: level, elapsed: lateBy) == .lock { record.lockedAt = now }
+        }
         context.insert(record)
         try? context.save()
-        log("Predicted \(record.predictedUp ? "UP" : "DOWN") for \(ticker) — P(up) \(Self.percent(probability))")
+        if record.isAwaitingCall {
+            log("Waiting for a \(Self.percent(level)) call on \(ticker) — now \(Self.percent(record.confidence)) \(record.predictedUp ? "Up" : "Down"); calls by +12 or not at all")
+        } else {
+            log("Predicted \(record.predictedUp ? "UP" : "DOWN") for \(ticker) — P(up) \(Self.percent(probability))")
+        }
+    }
+
+    /// Wait until confident: each second from the call time to +12, locks the window's
+    /// waiting call once the model is confident enough, at the model's view then.
+    private func lockWaitingCallIfReady(for market: KalshiMarket) {
+        guard let context = modelContext, !isErased, let probability = liveProbability, let spot else { return }
+        let ticker = market.ticker
+        let descriptor = FetchDescriptor<PredictionRecord>(predicate: #Predicate { $0.ticker == ticker })
+        guard let record = (try? context.fetch(descriptor))?.first, record.isAwaitingCall, record.actualUp == nil else { return }
+        let now = Date.now
+        switch Self.waitDecision(probabilityUp: probability, level: record.waitLevel, elapsed: now.timeIntervalSince(market.openTime)) {
+        case .wait:
+            return
+        case .expired:
+            if lastExpiredTicker != ticker {
+                lastExpiredTicker = ticker
+                log("No call for \(ticker): it never reached \(Self.percent(record.waitLevel)) by +12")
+            }
+        case .lock:
+            record.lockCall(at: now, probabilityUp: probability, spot: spot, yesMid: market.yesMid, yesBid: market.yesBid,
+                            yesAsk: market.yesAsk, contributions: model.contributions(liveFeatures, excluding: excludedFeatures))
+            try? context.save()
+            log("Predicted \(record.predictedUp ? "UP" : "DOWN") for \(ticker) at +\(Int(now.timeIntervalSince(market.openTime) / 60)) min — P(up) \(Self.percent(probability)), reached \(Self.percent(record.waitLevel))")
+        }
     }
 
     // MARK: Resolution
@@ -1611,6 +1682,7 @@ final class BotEngine {
             "trading_style": tradingStyle.title,
             "use_kalshi_odds": "\(useKalshiOdds)",
             "keep_mac_awake": "\(keepMacAwake)",
+            "wait_until_confidence": "\(waitUntilConfidence)",
             "custom_stop_loss": "\(customStopLoss)",
             "custom_take_profit": "\(customTakeProfit)",
             "is_running": "\(isRunning)",

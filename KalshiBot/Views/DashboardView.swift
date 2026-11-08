@@ -240,31 +240,51 @@ private struct PredictionPanel: View {
 
     var body: some View {
         Panel(title: "Prediction", systemImage: "scope") {
-            if let record, engine.isNoCall(record) {
+            if let record, record.isAwaitingCall, record.actualUp == nil,
+               Date.now.timeIntervalSince(record.openTime) <= BotEngine.waitDeadline {
+                waiting(record)
+            } else if let record, engine.isNoCall(record) {
                 Label("NO CALL", systemImage: "minus.circle")
                     .font(.system(size: 26, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 18)
                     .padding(.vertical, 8)
                     .glassEffect(.regular, in: .capsule)
-                    .infoTip("No call", "This window's call was below the confidence threshold set under Calls in the Strategy card, so it isn't counted in accuracy or performance. It's still logged and the model still trains on it.")
-                Text("Leaning \(record.predictedUp ? "Up" : "Down") at only \(BotEngine.percent(record.confidence)) confidence — below the \(BotEngine.percent(engine.minimumCallConfidence)) needed for a call.")
+                    .infoTip("No call", record.isAwaitingCall
+                             ? "The call waited for \(BotEngine.percent(record.waitLevel)) confidence (Wait, in the Strategy card) and never got there by +12, so this window has no call. It isn't counted in accuracy or performance; it's still logged and the model still trains on it."
+                             : "This window's call was below the confidence threshold set under Calls in the Strategy card, so it isn't counted in accuracy or performance. It's still logged and the model still trains on it.")
+                Text(record.isAwaitingCall
+                     ? "Never reached \(BotEngine.percent(record.waitLevel)) confidence by +12 — no call this window."
+                     : "Leaning \(record.predictedUp ? "Up" : "Down") at only \(BotEngine.percent(record.confidence)) confidence — below the \(BotEngine.percent(engine.minimumCallConfidence)) needed for a call.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let record {
+                let minute = Int(record.predictedAt.timeIntervalSince(record.openTime) / 60)
                 PredictionBadge(probabilityUp: record.probabilityUp)
-                Text("Locked \(record.predictedAt.formatted(date: .omitted, time: .standard)) · \(Int(record.predictedAt.timeIntervalSince(record.openTime)))s after open")
-                    .infoTip("Call time", "Calls lock \(engine.callDelayMinutes) min after the open — the same moment the model's history is built at, so live calls and training examples are like for like. After it locks, the call never changes; the live figures below keep updating. Change the minute under Call at in the Strategy card.")
+                Text("Locked \(record.predictedAt.formatted(date: .omitted, time: .standard)) · \(Int(record.predictedAt.timeIntervalSince(record.openTime)))s after open\(record.waitLevel > 0 ? " · waited for \(BotEngine.percent(record.waitLevel))" : "")")
+                    .infoTip("Call time", record.waitLevel > 0
+                             ? "With Wait on, the call locked at the first moment from +\(engine.callDelayMinutes) to +12 that the bot was at least \(BotEngine.percent(record.waitLevel)) confident. After it locks, the call never changes; the live figures below keep updating. The model still learns from each window at +\(engine.callDelayMinutes)."
+                             : "Calls lock \(engine.callDelayMinutes) min after the open — the same moment the model's history is built at, so live calls and training examples are like for like. After it locks, the call never changes; the live figures below keep updating. Change the minute under Call at in the Strategy card.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if let like = engine.callsLikeThis(confidence: record.confidence) {
-                    Label("Calls like this (\(like.band)–\(like.band + 5)% at +\(engine.callDelayMinutes) min) won \(BotEngine.percent(Double(like.won) / Double(like.total))) of \(like.total.formatted()) past windows.",
+                if let like = engine.callsLikeThis(confidence: record.confidence, minute: min(max(minute, 3), 12)) {
+                    Label("Calls like this (\(like.band)–\(like.band + 5)% at +\(min(max(minute, 3), 12)) min) won \(BotEngine.percent(Double(like.won) / Double(like.total))) of \(like.total.formatted()) past windows.",
                           systemImage: "clock.arrow.circlepath")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .infoTip("Calls like this", "How often Kalshi's favorite won in past windows priced in the same 5-point confidence band at the same call time — what this confidence has been worth historically. Because Kalshi's price is well calibrated, expect a 60% call to be wrong about 4 times in 10.")
+                }
+                if let close = closeCall(record) {
+                    Label(close.onWrongSide
+                          ? "Close call: the price was on the other side of the target when it locked. Calls like this reversed \(ReversalHistory.percent(close.pastLossRate)) of the time."
+                          : "Close call: \(close.cushionSigma.formatted(.number.precision(.fractionLength(1))))σ from the target when it locked. Calls this close reversed \(ReversalHistory.percent(close.pastLossRate)) of the time.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .infoTip("Close call", "When the call locked, the price was within \(ReversalHistory.closeSigma.formatted())σ of the target on the called side (σ: the price movement still expected before the close), or already past it. In 6,467 past windows, calls that close at +3 lost \(ReversalHistory.percent(ReversalHistory.closeAtCallLost)) of the time, against about 20% for calls with a larger cushion. To skip calls like this, raise Calls in the Strategy card to 60–70%: close calls are the low-confidence ones.")
                 }
             } else {
                 Text("No prediction locked for this window")
@@ -279,6 +299,33 @@ private struct PredictionPanel: View {
                 LiveOddsView(market: market, liveProbability: engine.liveProbability)
             }
         }
+    }
+
+    /// Wait until confident: the call hasn't locked yet.
+    @ViewBuilder
+    private func waiting(_ record: PredictionRecord) -> some View {
+        let now = engine.liveProbability.map { max($0, 1 - $0) }
+        let side = engine.liveProbability.map { $0 >= 0.5 ? "Up" : "Down" } ?? "—"
+        Label("WAITING", systemImage: "hourglass")
+            .font(.system(size: 26, weight: .bold, design: .rounded))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 8)
+            .glassEffect(.regular, in: .capsule)
+            .infoTip("Waiting for a confident call", "Wait is on in the Strategy card: the call locks the first moment, up to +12, that the bot is at least \(BotEngine.percent(record.waitLevel)) confident — that is, once the reversal risk of the side ahead is \(BotEngine.percent(1 - record.waitLevel)) or less. If it never gets there, the window is a No call. In a backtest, waiting for 80% was right 84% of the time on 87% of windows.")
+        Text("Locks once \(BotEngine.percent(record.waitLevel)) confident — now \(now.map(BotEngine.percent) ?? "—") \(side). No call if it isn't by +12 (\(record.openTime.addingTimeInterval(12 * 60).formatted(date: .omitted, time: .shortened))).")
+            .font(.caption)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// How close the locked call was to its target, measured with the current volatility
+    /// (it changes little within a window).
+    private func closeCall(_ record: PredictionRecord) -> ReversalRisk.CloseCall? {
+        guard let volatility = engine.volatilityPerRootSecond else { return nil }
+        return ReversalRisk.closeCall(spot: record.spotAtPrediction, strike: record.strike, calledUp: record.predictedUp,
+                                      volatility: volatility, secondsRemaining: record.closeTime.timeIntervalSince(record.predictedAt))
     }
 }
 

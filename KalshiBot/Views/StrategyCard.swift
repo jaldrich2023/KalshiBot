@@ -143,7 +143,7 @@ struct StrategyCard: View {
                 }
                 .menuStyle(.button)
                 .fixedSize()
-                .infoTip("Preset", "Sets the call time and the confidence threshold together. High hit rate calls later and counts only confident calls: right 88% of the time in 6,459 past windows, versus 73% for Standard, with 71% of windows called. It raises accuracy, not profit — those contracts cost correspondingly more. Changing the call time rebuilds the model's history at the new minute. Custom means the settings below don't match a preset.")
+                .infoTip("Preset", "Sets the call time, the confidence threshold and waiting together. High hit rate waits from +3 until a call is 80% confident (Wait below): right 84% of the time on 87% of windows in a backtest of 1,941 recent windows, versus 73% for Standard's calls. It raises accuracy, not profit — those contracts cost correspondingly more. Custom means the settings below don't match a preset.")
             }
             GridRow {
                 Text("Call at").foregroundStyle(.secondary)
@@ -166,6 +166,18 @@ struct StrategyCard: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .infoTip("Calls", "Confident calls only: windows whose call is below this confidence are marked “No call” and left out of accuracy and performance. Fewer calls, but historically far more of them right. Every window is still logged and trained on.")
+            }
+            GridRow {
+                Text("Wait").foregroundStyle(.secondary)
+                Picker("Wait", selection: $engine.waitUntilConfidence) {
+                    Text("Off — call at the call time").tag(0.0)
+                    ForEach(BotEngine.waitConfidenceOptions, id: \.self) { level in
+                        Text("Until \(BotEngine.percent(level)) confident").tag(level)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .infoTip("Wait until confident", "Instead of locking at the call time, the call waits — up to +12 — until the bot is at least this confident (reversal risk at most 100% minus this), and locks then; if it never gets there, the window is a No call. In a backtest on 1,941 recent windows: waiting for 75% was right 80.5% of the time on 93% of windows (average call at +6), 80% was right 84.3% on 87% (+7), 85% was right 89.0% on 77% (+8) and 90% was right 93.6% on 65% (+9), against 65.6% for every call at +3. It raises accuracy, not profit: later, more confident calls cost correspondingly more. Training still uses each window at the call time, so changing this doesn't rebuild anything.")
             }
             GridRow {
                 Text("Stop-loss").foregroundStyle(.secondary)
@@ -407,6 +419,12 @@ struct StrategyCard: View {
     private var alerts: some View {
         VStack(alignment: .leading, spacing: 8) {
             column("Entry & exit alerts")
+            Label("Exits limit how much a window can lose; they don't add expected profit. Selling the called side when it fell, on \(ReversalHistory.exitWindows.formatted()) past windows, was never better than holding once fees were paid.",
+                  systemImage: "shield.lefthalf.filled")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .infoTip("What exits are for", "An exit caps the loss on a window that's turning against the call. In a backtest on the newest \(ReversalHistory.exitWindows.formatted()) windows, selling the called side whenever its price fell below any level from 45¢ to 10¢ did no better than holding to settlement (\(String(format: "%+.2f", ReversalHistory.exitVersusHoldCents))¢ ± \(String(format: "%.2f", ReversalHistory.exitVersusHoldMarginCents))¢ a contract), because Kalshi's price already reflects the risk and selling pays a second fee. Use exits to keep losses small, not to improve results.")
             if engine.strategyAlerts.isEmpty {
                 Text("No entry or exit conditions have triggered this window. With the \(engine.tradingStyle.title.lowercased()) style an entry needs an expected \(StrategyAdvisor.signedCents(engine.tradingStyle.minimumEdge)) per contract after fees; exits trigger at \(Int(engine.tradingStyle.exitRisk * 100))% reversal risk\(engine.tradingStyle.takeProfit.map { ", at a \(StrategyAdvisor.cents($0)) bid" } ?? ""), or when selling is worth as much as holding.")
                     .foregroundStyle(.secondary)

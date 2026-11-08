@@ -98,9 +98,14 @@ struct PredictionLogView: View {
             TableColumn("Result") { r in
                 cell(r, column: 9) {
                     switch r.isCorrect {
+                    case _ where r.isAwaitingCall && r.actualUp == nil && Date.now.timeIntervalSince(r.openTime) <= BotEngine.waitDeadline:
+                        Label("Waiting", systemImage: "hourglass").foregroundStyle(.secondary)
+                            .help("Waiting until the call is \(BotEngine.percent(r.waitLevel)) confident, up to +12")
                     case _ where engine.isNoCall(r):
                         Label("No call", systemImage: "minus.circle").foregroundStyle(.secondary)
-                            .help("Below the \(BotEngine.percent(engine.minimumCallConfidence)) confidence threshold, so not counted")
+                            .help(r.isAwaitingCall
+                                  ? "Never reached \(BotEngine.percent(r.waitLevel)) confidence by +12, so not counted"
+                                  : "Below the \(BotEngine.percent(engine.minimumCallConfidence)) confidence threshold, so not counted")
                     case true?: Label("Correct", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                     case false?: Label("Wrong", systemImage: "xmark.circle.fill").foregroundStyle(.red)
                     case nil: Text("—").foregroundStyle(.secondary)

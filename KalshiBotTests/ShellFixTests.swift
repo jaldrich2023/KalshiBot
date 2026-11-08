@@ -116,3 +116,87 @@ struct UpdateCheckFixTests {
         #expect(updates.availableUpdate == nil)
     }
 }
+
+struct ReversalWarningTests {
+    // $2/√s for 720 s left: 1σ of the movement still to come is about $53.67.
+    @Test func closeCallsAreWithinHalfASigmaOrOnTheWrongSide() throws {
+        let sigma = 2 * 720.0.squareRoot()
+        let close = try #require(ReversalRisk.closeCall(spot: 80_000 + 0.3 * sigma, strike: 80_000, calledUp: true,
+                                                        volatility: 2, secondsRemaining: 720))
+        #expect(abs(close.cushionSigma - 0.3) < 1e-9)
+        #expect(close.pastLossRate == ReversalHistory.closeAtCallLost)
+        #expect(!close.onWrongSide)
+
+        let wrongSide = try #require(ReversalRisk.closeCall(spot: 80_010, strike: 80_000, calledUp: false,
+                                                            volatility: 2, secondsRemaining: 720))
+        #expect(wrongSide.onWrongSide)
+        #expect(wrongSide.pastLossRate == ReversalHistory.wrongSideAtCallLost)
+
+        // A comfortable cushion isn't flagged, and nothing is flagged without volatility.
+        #expect(ReversalRisk.closeCall(spot: 80_000 + sigma, strike: 80_000, calledUp: true, volatility: 2, secondsRemaining: 720) == nil)
+        #expect(ReversalRisk.closeCall(spot: 80_001, strike: 80_000, calledUp: true, volatility: 0, secondsRemaining: 720) == nil)
+    }
+
+    private func titles(secondsRemaining: TimeInterval, price: Double) -> [String] {
+        ReversalRisk.assess(.init(price: price, strike: 80_000, secondsRemaining: secondsRemaining, volatility: 2)).factors.map(\.title)
+    }
+
+    @Test func closeLateInTheWindowWarnsAboutTheFinalMinutes() {
+        // 150 s left, $5 above the target: well under 0.5σ.
+        #expect(titles(secondsRemaining: 150, price: 80_005).contains("Final minutes, close to the target"))
+        #expect(!titles(secondsRemaining: 150, price: 80_005).contains("Close to the target"))
+        // Earlier in the window, the ordinary warning.
+        #expect(titles(secondsRemaining: 600, price: 80_005).contains("Close to the target"))
+        // A big cushion late on: no warning.
+        #expect(!titles(secondsRemaining: 150, price: 80_200).contains("Final minutes, close to the target"))
+    }
+}
+
+@MainActor
+struct WaitUntilConfidentTests {
+    @Test func aWaitingCallLocksOnceConfidentAndGivesUpAfterPlusTwelve() {
+        #expect(BotEngine.waitDecision(probabilityUp: 0.72, level: 0.80, elapsed: 300) == .wait)
+        #expect(BotEngine.waitDecision(probabilityUp: 0.81, level: 0.80, elapsed: 300) == .lock)
+        // Either side counts: a 19% chance of Up is an 81% Down call.
+        #expect(BotEngine.waitDecision(probabilityUp: 0.19, level: 0.80, elapsed: 300) == .lock)
+        #expect(BotEngine.waitDecision(probabilityUp: 0.80, level: 0.80, elapsed: 720) == .lock)   // exactly at the level, at +12
+        #expect(BotEngine.waitDecision(probabilityUp: 0.95, level: 0.80, elapsed: 726) == .expired)
+    }
+
+    private func record(probabilityUp: Double) -> PredictionRecord {
+        PredictionRecord(ticker: "KXBTC15M-TEST", openTime: Date(timeIntervalSince1970: 0), closeTime: Date(timeIntervalSince1970: 900),
+                         predictedAt: Date(timeIntervalSince1970: 180), strike: 80_000, spotAtPrediction: 80_010,
+                         proxyOpenAverage: nil, probabilityUp: probabilityUp, marketYesMid: probabilityUp,
+                         features: [.headStart: 0.4], contributions: [.headStart: 0.1], excludedFeatures: [], callDelay: 180)
+    }
+
+    @Test func lockingTakesTheModelsViewThenButKeepsTheTrainingSnapshot() {
+        let r = record(probabilityUp: 0.62)
+        r.waitLevel = 0.80
+        #expect(r.isAwaitingCall)
+        let locked = Date(timeIntervalSince1970: 400)
+        r.lockCall(at: locked, probabilityUp: 0.17, spot: 79_950, yesMid: 0.18, yesBid: 0.17, yesAsk: 0.19,
+                   contributions: [.headStart: -0.5])
+        #expect(!r.isAwaitingCall)
+        #expect(r.lockedAt == locked && r.predictedAt == locked)
+        #expect(r.predictedUp == false && r.probabilityUp == 0.17)
+        #expect(r.spotAtPrediction == 79_950 && r.marketYesAsk == 0.19)
+        #expect(r.contributions[.headStart] == -0.5)
+        // The training snapshot and its call time are untouched.
+        #expect(r.features[.headStart] == 0.4)
+        #expect(r.callDelay == 180)
+    }
+
+    @Test func aCallThatNeverLockedIsANoCall() {
+        let engine = BotEngine()
+        let waiting = record(probabilityUp: 0.70)
+        waiting.waitLevel = 0.80
+        #expect(engine.isNoCall(waiting))
+        let locked = record(probabilityUp: 0.70)
+        locked.waitLevel = 0.80
+        locked.lockedAt = locked.predictedAt
+        #expect(engine.isNoCall(locked) == (engine.minimumCallConfidence > 0.70))
+        // Records from before 2.28 (no wait level) are judged by the threshold alone, as before.
+        #expect(!record(probabilityUp: 0.70).isAwaitingCall)
+    }
+}

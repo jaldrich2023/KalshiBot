@@ -25,7 +25,7 @@ A macOS app that calls every Kalshi 15-minute Bitcoin Up/Down window, shows the 
 
 <p align="center"><a href="https://github.com/jaldrich2023/KalshiBot/releases/latest"><b>⬇︎ Download the latest version</b></a> · <a href="docs/INSTALL.md">Install guide</a></p>
 
-<p align="center"><b>Current version: 2.27.1 (Build 49)</b> · macOS 27.2 or later</p>
+<p align="center"><b>Current version: 2.28.0 (Build 50)</b> · macOS 27.2 or later</p>
 
 ![The dashboard during a live window](docs/images/01-dashboard.jpg)
 
