@@ -26,10 +26,18 @@ struct PredictionLogView: View {
 
     var body: some View {
         Table(records) {
-            TableColumn("Window") { r in
-                cell(r, column: 0) { Text(r.openTime.formatted(date: .abbreviated, time: .shortened)) }
+            // Grouped: a table builder takes at most 10 columns directly.
+            Group {
+                TableColumn("Window") { r in
+                    cell(r, column: 0) { Text(r.openTime.formatted(date: .abbreviated, time: .shortened)) }
+                }
+                .width(min: 150, ideal: 170)
+                TableColumn("Locked") { r in
+                    // Its own hover id (10), so the other cells' ids stay as they were.
+                    cell(r, column: 10) { lockedText(r) }
+                }
+                .width(min: 120, ideal: 140)
             }
-            .width(min: 150, ideal: 170)
             TableColumn("Target") { r in
                 cell(r, column: 1) {
                     Text(BotEngine.usd(r.strike)).monospacedDigit()
@@ -199,12 +207,45 @@ struct PredictionLogView: View {
         return point.x < frame.midX ? .trailing : .leading
     }
 
+    /// When the call locked: the time, and how far into the window ("+6:12"). With Wait on,
+    /// "Waiting…" until it locks, and "Never" if it didn't reach its level by +12.
+    @ViewBuilder
+    private func lockedText(_ r: PredictionRecord) -> some View {
+        if r.isAwaitingCall {
+            if r.actualUp == nil && Date.now.timeIntervalSince(r.openTime) <= BotEngine.waitDeadline {
+                Label("Waiting…", systemImage: "hourglass").foregroundStyle(.secondary)
+                    .help("Waiting until the call is \(BotEngine.percent(r.waitLevel)) confident, up to +12")
+            } else {
+                Text("Never").foregroundStyle(.secondary)
+                    .help("Never reached \(BotEngine.percent(r.waitLevel)) confidence by +12 — no call")
+            }
+        } else {
+            HStack(spacing: 4) {
+                Text(r.predictedAt.formatted(date: .omitted, time: .standard))
+                Text(Self.windowOffset(r)).foregroundStyle(.secondary)
+                if r.waitLevel > 0 {
+                    Image(systemName: "hourglass").foregroundStyle(.secondary).imageScale(.small)
+                }
+            }
+            .monospacedDigit()
+            .help(r.waitLevel > 0
+                  ? "Waited until \(BotEngine.percent(r.waitLevel)) confident, then locked \(Self.windowOffset(r)) into the window"
+                  : "Locked at the call time, \(Self.windowOffset(r)) into the window")
+        }
+    }
+
+    /// Time into the window the call locked, e.g. "+6:12".
+    static func windowOffset(_ r: PredictionRecord) -> String {
+        PredictionRecord.offsetText(r.lockOffset)
+    }
+
     static func csv(for records: [PredictionRecord]) -> String {
         let iso = ISO8601DateFormatter()
         let featureKeys = FeatureKey.allCases
         var lines = [
             (["ticker", "open_time", "close_time", "predicted_at", "strike", "spot_at_prediction",
-              "proxy_open_avg", "p_up", "predicted", "kalshi_yes_mid", "kalshi_yes_bid", "kalshi_yes_ask", "settlement_value", "actual", "correct"]
+              "proxy_open_avg", "p_up", "predicted", "kalshi_yes_mid", "kalshi_yes_bid", "kalshi_yes_ask", "settlement_value", "actual", "correct",
+              "wait_level", "locked_at"]
              + featureKeys.map { "f_\($0.rawValue)" }).joined(separator: ",")
         ]
         for r in records.sorted(by: { $0.openTime < $1.openTime }) {
@@ -216,6 +257,10 @@ struct PredictionLogView: View {
                 r.marketYesMid.map { String($0) } ?? "", r.marketYesBid.map { String($0) } ?? "",
                 r.marketYesAsk.map { String($0) } ?? "", r.settlementValue.map { String($0) } ?? "",
                 r.actualUp.map { $0 ? "up" : "down" } ?? "", r.isCorrect.map { $0 ? "1" : "0" } ?? "",
+                // Wait until confident: the level waited for (0 = off) and when it locked;
+                // blank locked_at with a level means it never locked (a No call).
+                r.waitLevel > 0 ? String(r.waitLevel) : "0",
+                r.waitLevel > 0 ? (r.lockedAt.map { iso.string(from: $0) } ?? "") : iso.string(from: r.predictedAt),
             ]
             fields += featureKeys.map { key in features[key].map { String(format: "%.4f", $0) } ?? "" }
             lines.append(fields.joined(separator: ","))

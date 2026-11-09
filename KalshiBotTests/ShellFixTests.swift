@@ -200,3 +200,37 @@ struct WaitUntilConfidentTests {
         #expect(!record(probabilityUp: 0.70).isAwaitingCall)
     }
 }
+
+@MainActor
+struct LockTimeTests {
+    private func record(lockedAfter seconds: TimeInterval, wait: Double = 0, locked: Bool = true, settled: Bool = true) -> PredictionRecord {
+        let open = Date(timeIntervalSince1970: 1_000_000)
+        let r = PredictionRecord(ticker: "T\(seconds)-\(wait)-\(locked)-\(settled)", openTime: open, closeTime: open.addingTimeInterval(900),
+                                 predictedAt: open.addingTimeInterval(seconds), strike: 1, spotAtPrediction: 1, proxyOpenAverage: nil,
+                                 probabilityUp: 0.8, marketYesMid: 0.8, features: [:], contributions: [:], excludedFeatures: [])
+        r.waitLevel = wait
+        if wait > 0 && locked { r.lockedAt = r.predictedAt }
+        if settled { r.actualUp = true }
+        return r
+    }
+
+    @Test func offsetsReadAsMinutesAndSeconds() {
+        #expect(PredictionRecord.offsetText(180) == "+3:00")
+        #expect(PredictionRecord.offsetText(372.4) == "+6:12")
+        #expect(PredictionRecord.offsetText(-5) == "+0:00")
+    }
+
+    @Test func theAverageCountsSettledCallsThatLocked() throws {
+        let calls = [
+            record(lockedAfter: 180),                                 // no wait, at the call time
+            record(lockedAfter: 420, wait: 0.8),                      // waited, locked at +7
+            record(lockedAfter: 180, wait: 0.8, locked: false),       // never locked: left out
+            record(lockedAfter: 600, settled: false),                 // not settled yet: left out
+        ]
+        let lock = try #require(PredictionRecord.averageLock(calls))
+        #expect(lock.seconds == 300)
+        #expect(lock.calls == 2)
+        #expect(lock.waited == 1)
+        #expect(PredictionRecord.averageLock([]) == nil)
+    }
+}

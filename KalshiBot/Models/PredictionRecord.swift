@@ -97,6 +97,24 @@ final class PredictionRecord {
     /// The call is waiting to reach its confidence level (or never did).
     var isAwaitingCall: Bool { waitLevel > 0 && lockedAt == nil }
 
+    /// Seconds into the window the call locked.
+    var lockOffset: TimeInterval { max(predictedAt.timeIntervalSince(openTime), 0) }
+
+    /// "+6:12": minutes and seconds into the window.
+    nonisolated static func offsetText(_ seconds: TimeInterval) -> String {
+        let s = max(Int(seconds.rounded()), 0)
+        return "+\(s / 60):" + String(format: "%02d", s % 60)
+    }
+
+    /// When settled calls locked, on average, and how many of them waited. Calls that
+    /// never locked (no call) aren't included; nil with no settled calls.
+    static func averageLock(_ calls: [PredictionRecord]) -> (seconds: TimeInterval, calls: Int, waited: Int)? {
+        let locked = calls.filter { $0.isResolved && !$0.isAwaitingCall }
+        guard !locked.isEmpty else { return nil }
+        let mean = locked.map(\.lockOffset).reduce(0, +) / Double(locked.count)
+        return (mean, locked.count, locked.filter { $0.waitLevel > 0 }.count)
+    }
+
     /// Locks a waiting call with the model's view now. The features from the call time
     /// stay as they were: they're the window's training example, made at the same moment
     /// for every window.

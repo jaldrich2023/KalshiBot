@@ -2,7 +2,7 @@
 
 Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.
 
-Version 2.28.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC
+Version 2.29.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC
 
 ![The dashboard during a live window](images/01-dashboard.jpg)
 
@@ -98,6 +98,7 @@ Before the call time, the card says "No prediction locked for this window" and s
 The scorecard for every settled call:
 
 - **Accuracy**, with how many were correct and its 95% range (a Wilson interval, which stays between 0% and 100% and is never ±0).
+- **Average lock time:** how far into the window the counted, settled calls locked, on average. Without **Wait** it's the call time; with **Wait** on it shows how long calls waited for their confidence.
 - **Expected correct:** how many the bot's own probabilities said should be right, with a 95% range. If the actual number is inside the range, the difference is ordinary luck.
 - **Brier score:** the average squared error of the probabilities. Lower is better; 0.25 is a coin flip.
 - **Kalshi favorite accuracy, Kalshi Brier score:** the same measures for Kalshi's own price, on the windows that had a Kalshi price at the call.
@@ -275,6 +276,7 @@ Every window the bot has followed, newest first:
 | Column | Meaning |
 | --- | --- |
 | Window | The window's start time. |
+| Locked | When the call locked: the time, and how far into the window (for example "14:37:05 · +6:12"). With **Wait** on, an hourglass marks calls that waited; **Waiting…** means the call hasn't locked yet, and **Never** means it never reached the Wait level by +12 (a No call). |
 | Target | The window's target price. |
 | Spot at call | The bot's BRTI estimate when the call locked. |
 | P(up) | The bot's probability of Up. |
