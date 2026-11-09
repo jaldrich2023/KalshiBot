@@ -14,6 +14,8 @@ struct WindowPriceChart: View {
     let market: KalshiMarket
     /// This window's locked call, for the stop-loss and take-profit lines.
     var record: PredictionRecord?
+    /// Where past calls at a similar confidence were made (from the prediction log).
+    var similar: PredictionRecord.SimilarCallZone?
     /// Layers switched off on this chart (comma-separated `ChartLayer` raw values).
     @AppStorage("priceChartHiddenLayers") private var hiddenLayers = ""
 
@@ -93,6 +95,26 @@ struct WindowPriceChart: View {
         }
     }
 
+    /// This window's call, once locked: when, and where on the 60s line (the plotted
+    /// average at that second; the index estimate if the line hadn't started).
+    private func callPoint(in points: [PricePoint]) -> (time: Date, price: Double, record: PredictionRecord)? {
+        guard let record, record.ticker == market.ticker, !record.isAwaitingCall else { return nil }
+        let onLine = nearest(to: record.predictedAt, in: points).flatMap { abs($0.time.timeIntervalSince(record.predictedAt)) <= 2 ? $0.price : nil }
+        return (record.predictedAt, onLine ?? record.spotAtPrediction, record)
+    }
+
+    /// The similar-calls box in chart coordinates, on the called side of the target.
+    private func similarBox() -> (start: Date, end: Date, low: Double, high: Double)? {
+        guard let similar, let record, record.ticker == market.ticker, !record.isAwaitingCall else { return nil }
+        let direction: Double = record.predictedUp ? 1 : -1
+        let a = record.strike + direction * similar.distanceLow, b = record.strike + direction * similar.distanceHigh
+        // At least 20 seconds wide and $2 tall, so a tight cluster is still visible.
+        let start = market.openTime.addingTimeInterval(similar.lockStart)
+        let end = market.openTime.addingTimeInterval(max(similar.lockEnd, similar.lockStart + 20))
+        let low = min(a, b), high = max(max(a, b), min(a, b) + 2)
+        return (start, end, low, high)
+    }
+
     private func nearest(to date: Date, in points: [PricePoint]) -> PricePoint? {
         points.min { abs($0.time.timeIntervalSince(date)) < abs($1.time.timeIntervalSince(date)) }
     }
@@ -137,6 +159,18 @@ struct WindowPriceChart: View {
         }
         if let end = path.last {
             tags.append(ChartTag(id: "projected", text: "◆ Projected \(BotEngine.usd(end.center))", color: .accentColor, value: nil, side: .trailing, rank: 3))
+        }
+        if let call = callPoint(in: points) {
+            let r = call.record
+            tags.append(ChartTag(id: "call",
+                                 text: "\(r.predictedUp ? "▲ Called Up" : "▼ Called Down") \(BotEngine.percent(r.confidence)) · \(r.predictedAt.formatted(date: .omitted, time: .standard)) (\(PredictionRecord.offsetText(r.lockOffset)))",
+                                 color: r.predictedUp ? .green : .red, value: call.price, side: .center,
+                                 placement: r.predictedUp ? .above : .below))
+        }
+        if let similar, similarBox() != nil {
+            tags.append(ChartTag(id: "similar",
+                                 text: "▭ Similar calls: \(similar.count) at \(similar.bandLow)–\(similar.bandHigh)%, locked \(PredictionRecord.offsetText(similar.lockStart))–\(PredictionRecord.offsetText(similar.lockEnd))",
+                                 color: .secondary, value: nil, side: .leading, rank: 4))
         }
         if !trend.isEmpty, let projection {
             tags.append(ChartTag(id: "trend", text: "Trend \(Self.perMinute(projection.slopePerSecond))", color: .white.opacity(0.8), value: nil, side: .trailing, rank: 2))
@@ -191,6 +225,13 @@ struct WindowPriceChart: View {
                             .interpolationMethod(.linear)
                     }
 
+                    // Where past calls at a similar confidence were made (middle half of each).
+                    if shows(.similar), let box = similarBox() {
+                        RectangleMark(xStart: .value("From", box.start), xEnd: .value("To", box.end),
+                                      yStart: .value("Low", box.low), yEnd: .value("High", box.high))
+                            .foregroundStyle((record?.predictedUp == true ? Color.green : Color.red).opacity(0.14))
+                    }
+
                     ForEach(shows(.line) ? points : []) { point in
                         LineMark(x: .value("Time", point.time), y: .value("60s average", point.price),
                                  series: .value("Series", "60s average"))
@@ -226,6 +267,18 @@ struct WindowPriceChart: View {
                             .symbolSize(64)
                     }
 
+                    // The exact moment and price the call locked.
+                    if shows(.call), let call = callPoint(in: points) {
+                        let color: Color = call.record.predictedUp ? .green : .red
+                        RuleMark(x: .value("Called", call.time))
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                            .foregroundStyle(color.opacity(0.6))
+                        PointMark(x: .value("Called", call.time), y: .value("Price", call.price))
+                            .symbol(.triangle)
+                            .symbolSize(140)
+                            .foregroundStyle(color)
+                    }
+
                     if let hoveredDate, let hovered = nearest(to: hoveredDate, in: points) {
                         RuleMark(x: .value("Time", hovered.time))
                             .lineStyle(StrokeStyle(lineWidth: 1))
@@ -241,7 +294,9 @@ struct WindowPriceChart: View {
                                  yDomain: WindowChart.yDomain(points.map(\.price) + trend.map(\.price) + path.map(\.center)
                                                               + range.flatMap { [$0.low, $0.high] }
                                                               + [extremes?.high.price, extremes?.low.price].compactMap { $0 }
-                                                              + (exits.map { exitLines($0).map(\.price) } ?? []),
+                                                              + (exits.map { exitLines($0).map(\.price) } ?? [])
+                                                              + (shows(.call) ? [callPoint(in: points)?.price].compactMap { $0 } : [])
+                                                              + (shows(.similar) ? similarBox().map { [$0.low, $0.high] } ?? [] : []),
                                                               market: market),
                                  hoveredDate: $hoveredDate,
                                  tags: (tags(points: points, trend: trend, path: path, projection: projection, extremes: extremes)

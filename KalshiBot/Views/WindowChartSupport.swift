@@ -33,7 +33,7 @@ struct WindowReferenceMarks: ChartContent {
 
 /// Everything that can be drawn on a window chart, each switchable on or off.
 enum ChartLayer: String, CaseIterable, Identifiable {
-    case line, now, candles, movement, close, target, settlement, highLow, closeRange, trend, projection, exits
+    case line, now, candles, movement, close, target, settlement, highLow, closeRange, trend, projection, exits, call, similar
 
     var id: String { rawValue }
 
@@ -51,6 +51,8 @@ enum ChartLayer: String, CaseIterable, Identifiable {
         case .trend: "Trend"
         case .projection: "Projection"
         case .exits: "Stop & take profit"
+        case .call: "Call"
+        case .similar: "Similar calls"
         }
     }
 
@@ -69,10 +71,12 @@ enum ChartLayer: String, CaseIterable, Identifiable {
         case .trend: "a straight-line fit through the window's prices — descriptive, not a forecast"
         case .projection: "the expected path of the 60-second average to the close if the price holds"
         case .exits: "the stop-loss and take-profit prices for the called side, from the Strategy card"
+        case .call: "a marker on the 60-second line at the exact moment this window's call locked, labelled with the side, its confidence and the time"
+        case .similar: "a shaded box showing where your past calls at a similar confidence were made — the middle half of their lock times and of their distance from the target on the called side"
         }
     }
 
-    static let priceChart: [ChartLayer] = [.line, .now, .target, .settlement, .highLow, .closeRange, .trend, .projection, .exits]
+    static let priceChart: [ChartLayer] = [.line, .now, .target, .settlement, .highLow, .closeRange, .trend, .projection, .exits, .call, .similar]
     static let candleChart: [ChartLayer] = [.candles, .movement, .close, .target, .settlement, .highLow, .trend]
 
     /// The layer an edge tag belongs to, so hiding a layer hides its label too.
@@ -86,6 +90,8 @@ enum ChartLayer: String, CaseIterable, Identifiable {
         case "trend": .trend
         case "takeProfit", "stop": .exits
         case "close": .close
+        case "call": .call
+        case "similar": .similar
         default: nil
         }
     }

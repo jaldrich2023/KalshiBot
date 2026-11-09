@@ -2,7 +2,7 @@
 
 Calls, live odds and an honest scorecard for Kalshi's 15-minute Bitcoin markets.
 
-Version 2.29.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC
+Version 2.30.0 · macOS 27.2 or later · © 2026 I'm The Team, LLC
 
 ![The dashboard during a live window](images/01-dashboard.jpg)
 
@@ -127,9 +127,11 @@ This chart follows the same 60-second average that Kalshi settles on, across the
 - **High and Low:** the highest and lowest values the 60-second average has actually reached in this window, with the time and the chance of a new high or low before the close.
 - **Now, Trend and Projected:** the current value, the trend over the last few minutes, and the projected close, with the likely close range shaded.
 - **Settlement minute:** the shaded final minute.
+- **Call:** a triangle on the line at the exact moment this window's call locked, with a dotted line down the chart, labelled with the side, its confidence and the time (for example "▲ Called Up 72% · 14:33:02 (+3:02)"). With **Wait** on, it appears when the call locks.
+- **Similar calls:** a shaded box showing where your past calls at a similar confidence were made: the middle half of their lock times (left to right) and of their distance from the target on the called side (top to bottom). It's drawn from at least 10 settled calls in the same 5-point confidence band, widened to ±5 points if needed, and hidden until there are enough.
 - **Stop-loss and Take profit:** once a call is locked, these show where to exit the side that was called. Each label says what the contract would sell for at that price and your profit or loss at your stake. See chapter 4.
 
-Use **Layers** at the top right to show or hide each element: the 60s average, Now, Target, Settlement minute, High/Low, Close range, Trend, Projection, and Stop & take profit. Labels are arranged so they don't overlap one another, the lines, or the Now dot.
+Use **Layers** at the top right to show or hide each element: the 60s average, Now, Target, Settlement minute, High/Low, Close range, Trend, Projection, Stop & take profit, Call and Similar calls. Labels are arranged so they don't overlap one another, the lines, or the Now dot.
 
 ### The 1-minute candles chart
 

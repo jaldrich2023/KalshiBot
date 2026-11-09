@@ -70,7 +70,8 @@ struct DashboardView: View {
                     // The 60s average chart and the candle row are laid out together at
                     // one shared height, so the two charts match.
                     MatchedHeightRows(spacing: Theme.spacing) {
-                        WindowPriceChart(market: market, record: record)
+                        WindowPriceChart(market: market, record: record,
+                                         similar: record.flatMap { PredictionRecord.similarCallZone(for: $0, in: engine.calls(records)) })
                         HStack(alignment: .top, spacing: Theme.spacing) {
                             WindowCandleChart(market: market)
                             CandlePatternCard(market: market)

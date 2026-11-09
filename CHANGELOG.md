@@ -5,6 +5,18 @@ All notable changes to Kalshi Bot are documented here. The project follows
 new features, PATCH for fixes. Set the version in the target's `MARKETING_VERSION`
 build setting; the build number is `CURRENT_PROJECT_VERSION`.
 
+## [2.30.0] — 2026-11-09 · Build 52
+
+### Added
+- **The call on the 60-second chart.** A triangle marks the exact moment and price this
+  window's call locked, with a dotted line down the chart and a label: side, confidence
+  and time ("▲ Called Up 72% · 14:33:02 (+3:02)").
+- **Similar calls on the 60-second chart.** A shaded box shows where your past calls at a
+  similar confidence were made — the middle half of their lock times and of their
+  distance from the target on the called side — from at least 10 settled calls in the
+  same 5-point band (widened to ±5 points if needed).
+- Both are layers in the chart's Layers menu.
+
 ## [2.29.0] — 2026-11-08 · Build 51
 
 ### Added

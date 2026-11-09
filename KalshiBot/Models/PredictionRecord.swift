@@ -106,6 +106,55 @@ final class PredictionRecord {
         return "+\(s / 60):" + String(format: "%02d", s % 60)
     }
 
+    /// Where past calls like this one were made: the middle half of their lock times and
+    /// of their distance from the target on the called side. For the 60s chart.
+    struct SimilarCallZone: Equatable {
+        /// Seconds after the open: 25th and 75th percentile lock times.
+        let lockStart: TimeInterval
+        let lockEnd: TimeInterval
+        /// Dollars on the called side of the target (negative: the other side), 25th and
+        /// 75th percentiles.
+        let distanceLow: Double
+        let distanceHigh: Double
+        let count: Int
+        /// The confidence range matched, in percent, e.g. 70…75.
+        let bandLow: Int
+        let bandHigh: Int
+    }
+
+    /// Fewest past calls the zone is drawn from.
+    nonisolated static let similarCallMinimum = 10
+
+    /// Settled calls (other windows) in the same 5-point confidence band as `record`,
+    /// widened to ±5 points if there are too few. Nil with fewer than 10 either way.
+    static func similarCallZone(for record: PredictionRecord, in calls: [PredictionRecord]) -> SimilarCallZone? {
+        let past = calls.filter { $0.isResolved && !$0.isAwaitingCall && $0.ticker != record.ticker }
+        let band = BotEngine.confidenceBand(record.confidence)
+        for (low, high) in [(band, band + 5), (max(band - 5, 50), min(band + 10, 100))] {
+            let similar = past.filter {
+                let c = $0.confidence * 100
+                return c >= Double(low) - 1e-9 && c < Double(high) + (high == 100 ? 1 : 0)
+            }
+            guard similar.count >= similarCallMinimum else { continue }
+            let times = similar.map(\.lockOffset).sorted()
+            let distances = similar.map { ($0.spotAtPrediction - $0.strike) * ($0.predictedUp ? 1 : -1) }.sorted()
+            return SimilarCallZone(lockStart: quartile(times, 0.25), lockEnd: quartile(times, 0.75),
+                                   distanceLow: quartile(distances, 0.25), distanceHigh: quartile(distances, 0.75),
+                                   count: similar.count, bandLow: low, bandHigh: high)
+        }
+        return nil
+    }
+
+    /// Linear-interpolated quantile of sorted values.
+    nonisolated static func quartile(_ sorted: [Double], _ q: Double) -> Double {
+        guard let first = sorted.first else { return 0 }
+        guard sorted.count > 1 else { return first }
+        let position = q * Double(sorted.count - 1)
+        let i = Int(position.rounded(.down))
+        let fraction = position - Double(i)
+        return i + 1 < sorted.count ? sorted[i] + (sorted[i + 1] - sorted[i]) * fraction : sorted[i]
+    }
+
     /// When settled calls locked, on average, and how many of them waited. Calls that
     /// never locked (no call) aren't included; nil with no settled calls.
     static func averageLock(_ calls: [PredictionRecord]) -> (seconds: TimeInterval, calls: Int, waited: Int)? {

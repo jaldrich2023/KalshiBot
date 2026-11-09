@@ -1191,7 +1191,7 @@ struct ChartLayerTests {
     }
 
     @Test func everyTagBelongsToALayer() {
-        for id in ["target", "settlement", "high", "low", "price", "projected", "trend", "takeProfit", "stop", "close"] {
+        for id in ["target", "settlement", "high", "low", "price", "projected", "trend", "takeProfit", "stop", "close", "call", "similar"] {
             #expect(ChartLayer.forTag(id) != nil, "tag \(id) has no layer, so it couldn't be hidden")
         }
     }

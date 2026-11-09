@@ -234,3 +234,51 @@ struct LockTimeTests {
         #expect(PredictionRecord.averageLock([]) == nil)
     }
 }
+
+@MainActor
+struct SimilarCallZoneTests {
+    private func call(_ i: Int, confidence: Double, up: Bool = true, lockedAfter: TimeInterval, distance: Double, settled: Bool = true) -> PredictionRecord {
+        let open = Date(timeIntervalSince1970: 1_000_000 + Double(i) * 900)
+        let strike = 80_000.0
+        let r = PredictionRecord(ticker: "W\(i)", openTime: open, closeTime: open.addingTimeInterval(900),
+                                 predictedAt: open.addingTimeInterval(lockedAfter), strike: strike,
+                                 spotAtPrediction: strike + (up ? distance : -distance), proxyOpenAverage: nil,
+                                 probabilityUp: up ? confidence : 1 - confidence, marketYesMid: nil,
+                                 features: [:], contributions: [:], excludedFeatures: [])
+        if settled { r.actualUp = up }
+        return r
+    }
+
+    @Test func quartilesInterpolate() {
+        #expect(PredictionRecord.quartile([1, 2, 3, 4, 5], 0.25) == 2)
+        #expect(PredictionRecord.quartile([1, 2, 3, 4], 0.75) == 3.25)
+        #expect(PredictionRecord.quartile([7], 0.25) == 7)
+    }
+
+    @Test func theZoneIsTheMiddleHalfOfSimilarCalls() throws {
+        // Twelve settled 72% calls, Up and Down, locked at +3:00…+3:55, $10…$65 on the called side.
+        var past = (0..<12).map { i in
+            call(i, confidence: 0.72, up: i % 2 == 0, lockedAfter: 180 + Double(i) * 5, distance: 10 + Double(i) * 5)
+        }
+        past.append(call(50, confidence: 0.91, lockedAfter: 600, distance: 300))            // another band: ignored
+        past.append(call(51, confidence: 0.73, lockedAfter: 180, distance: 20, settled: false)) // not settled: ignored
+        let current = call(99, confidence: 0.74, lockedAfter: 200, distance: 15)
+        let zone = try #require(PredictionRecord.similarCallZone(for: current, in: past + [current]))
+        #expect(zone.count == 12)
+        #expect(zone.bandLow == 70 && zone.bandHigh == 75)
+        #expect(abs(zone.lockStart - 193.75) < 1e-9 && abs(zone.lockEnd - 221.25) < 1e-9)
+        // Distances are measured on the called side, whichever side that was.
+        #expect(abs(zone.distanceLow - 23.75) < 1e-9 && abs(zone.distanceHigh - 51.25) < 1e-9)
+    }
+
+    @Test func tooFewCallsWidenTheBandThenGiveUp() {
+        let current = call(99, confidence: 0.72, lockedAfter: 180, distance: 15)
+        // 6 in 70–75% and 6 in 65–70%: too few in the band, enough when widened to 65–80%.
+        let past = (0..<6).map { call($0, confidence: 0.72, lockedAfter: 180, distance: 10) }
+            + (6..<12).map { call($0, confidence: 0.67, lockedAfter: 180, distance: 10) }
+        let zone = PredictionRecord.similarCallZone(for: current, in: past)
+        #expect(zone?.count == 12)
+        #expect(zone?.bandLow == 65 && zone?.bandHigh == 80)
+        #expect(PredictionRecord.similarCallZone(for: current, in: Array(past.prefix(5))) == nil)
+    }
+}
