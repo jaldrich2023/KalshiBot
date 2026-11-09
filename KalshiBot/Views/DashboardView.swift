@@ -52,7 +52,7 @@ struct DashboardView: View {
                 // fixedSize + maxHeight: .infinity stretches each card to the tallest in its row.
                 HStack(alignment: .top, spacing: Theme.spacing) {
                     CurrentWindowPanel().frame(width: columnWidth)
-                    PredictionPanel(record: record).frame(width: columnWidth)
+                    PredictionPanel(record: record, averageLock: PredictionRecord.averageLock(engine.calls(records))).frame(width: columnWidth)
                     Group {
                         if let market {
                             ReversalRiskCard(market: market)
@@ -133,10 +133,8 @@ private struct StatsPanels: View {
         // Reads `settledCount` so the accuracy redraws as soon as a window settles, even
         // before SwiftData's query notices the changed record.
         let _ = engine.settledCount
-        let calls = engine.calls(records)
-        let stats = AccuracyStats(records: calls)
-        AccuracyPanel(stats: stats, skipped: records.filter { $0.isResolved && engine.isNoCall($0) }.count,
-                      averageLock: PredictionRecord.averageLock(calls))
+        let stats = AccuracyStats(records: engine.calls(records))
+        AccuracyPanel(stats: stats, skipped: records.filter { $0.isResolved && engine.isNoCall($0) }.count)
             .frame(width: columnWidth)
         ModelPanel(stats: stats, records: records).frame(width: columnWidth)
     }
@@ -239,6 +237,8 @@ private struct CurrentWindowPanel: View {
 private struct PredictionPanel: View {
     @Environment(BotEngine.self) private var engine
     let record: PredictionRecord?
+    /// When the counted, settled predictions locked, on average (see `PredictionRecord.averageLock`).
+    var averageLock: (seconds: TimeInterval, calls: Int, waited: Int)?
 
     var body: some View {
         Panel(title: "Prediction", systemImage: "scope") {
@@ -295,6 +295,14 @@ private struct PredictionPanel: View {
                 Text("The call locks \(engine.callDelayMinutes) min after each window opens.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            if let lock = averageLock {
+                Label("Predictions lock on average \(PredictionRecord.offsetText(lock.seconds)) into the window", systemImage: "timer")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .infoTip("Average lock time", "How far into the window the \(lock.calls) settled, counted predictions locked, on average\(lock.waited > 0 ? " — \(lock.waited) of them waited (Wait in the Strategy card) and locked once confident" : ""). Without Wait every prediction locks at the call time (+\(engine.callDelayMinutes):00 or a second or two after). Later predictions are right more often, which is why waiting raises accuracy. Windows that never reached the Wait level aren't included.")
             }
             if let market = engine.currentMarket {
                 Divider().opacity(0.5)
@@ -589,8 +597,6 @@ struct AccuracyPanel: View {
     let stats: AccuracyStats
     /// Settled windows marked "No call" by the confidence threshold.
     var skipped = 0
-    /// When the counted calls locked, on average (see `PredictionRecord.averageLock`).
-    var averageLock: (seconds: TimeInterval, calls: Int, waited: Int)?
 
     var body: some View {
         Panel(title: "Accuracy", systemImage: "target") {
@@ -599,13 +605,6 @@ struct AccuracyPanel: View {
                     Text("No settled windows yet.").foregroundStyle(.secondary)
                 } else {
                     AccuracyDetails(stats: stats)
-                }
-                if let lock = averageLock {
-                    LabeledContent("Average lock time") {
-                        Text("\(PredictionRecord.offsetText(lock.seconds)) into the window")
-                            .monospacedDigit()
-                    }
-                    .infoTip("Average lock time", "How far into the window the \(lock.calls) settled calls counted here locked, on average\(lock.waited > 0 ? " — \(lock.waited) of them waited (Wait in the Strategy card) and locked once confident" : ""). Without Wait every call locks at the call time (+\(engine.callDelayMinutes):00 or a second or two after). Later calls are right more often, which is why waiting raises accuracy. Windows that never reached the Wait level aren't included.")
                 }
                 if engine.minimumCallConfidence > 0 {
                     Text("Confident calls only (≥\(BotEngine.percent(engine.minimumCallConfidence))): \(skipped) low-confidence window\(skipped == 1 ? "" : "s") skipped")

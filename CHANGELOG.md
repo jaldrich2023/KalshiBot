@@ -12,8 +12,8 @@ build setting; the build number is `CURRENT_PROJECT_VERSION`.
   the window ("14:37:05 · +6:12"). With Wait on, an hourglass marks calls that waited,
   "Waiting…" a call that hasn't locked yet, and "Never" one that didn't reach its level
   by +12 (a No call).
-- **Average lock time on the Accuracy card**: how far into the window the counted,
-  settled calls locked, on average, and how many of them waited.
+- **Average lock time on the Prediction card**: "Predictions lock on average +5:42 into
+  the window" — the counted, settled predictions, with how many of them waited.
 - The CSV export has `wait_level` and `locked_at` columns.
 
 ## [2.28.0] — 2026-11-08 · Build 50

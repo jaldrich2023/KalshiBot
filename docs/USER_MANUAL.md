@@ -90,6 +90,7 @@ Before the call time, the card says "No prediction locked for this window" and s
 - **Calls like this:** how often past calls in the same 5-point confidence band, at the same call minute, were right. For example: "Calls like this (70–75% at +3 min) won 77% of 1,448 past windows."
 - **WAITING** (with **Wait** on): the call hasn't locked yet. It locks the first moment, up to +12, that the bot reaches the confidence set under **Wait**, and the card then shows when it locked. If it never does, the card says **NO CALL**.
 - **Close call** (orange, only when it applies): the price was within 0.5σ of the target when the call locked (σ is the price movement still expected before the close), or already on the other side. In 6,467 past windows, calls that close lost 40% of the time (48% when already on the other side), against about 20% for the rest. Raising **Calls** to 60–70% skips most of them.
+- **Average lock time:** "Predictions lock on average +5:42 into the window" — how far into the window the counted, settled predictions locked. Without **Wait** it's the call time; with **Wait** on it shows how long predictions waited for their confidence.
 - **Live:** Kalshi's Yes and No prices right now, as percentages, with the buy and sell prices in cents.
 - **Bot now:** what the model would say from the current price. This is for information only; the locked call doesn't change.
 
@@ -98,7 +99,6 @@ Before the call time, the card says "No prediction locked for this window" and s
 The scorecard for every settled call:
 
 - **Accuracy**, with how many were correct and its 95% range (a Wilson interval, which stays between 0% and 100% and is never ±0).
-- **Average lock time:** how far into the window the counted, settled calls locked, on average. Without **Wait** it's the call time; with **Wait** on it shows how long calls waited for their confidence.
 - **Expected correct:** how many the bot's own probabilities said should be right, with a 95% range. If the actual number is inside the range, the difference is ordinary luck.
 - **Brier score:** the average squared error of the probabilities. Lower is better; 0.25 is a coin flip.
 - **Kalshi favorite accuracy, Kalshi Brier score:** the same measures for Kalshi's own price, on the windows that had a Kalshi price at the call.
